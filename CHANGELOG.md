@@ -7,6 +7,14 @@
 
 ## [未发布]
 
+## [0.0.18] - 2026-10-08
+
+### 修复
+
+- `deploy/install.sh`：pm2 守护进程若由 CLI 拉起（未被 systemd 托管），unit 会显示 `inactive`，
+  因此**不经受开机自启与崩溃自动重启**。现自动执行 `pm2 kill` → `systemctl start pm2-root`
+  让 systemd 接管（经 unit `pm2 resurrect` 从 dump 恢复），并校验 `is-active`。
+
 ## [0.0.17] - 2026-10-08
 
 ### 修复

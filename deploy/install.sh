@@ -262,7 +262,22 @@ pm2 save >/dev/null
 
 if is_root && have systemctl; then
   pm2 startup systemd -u root --hp /root >/dev/null 2>&1 || true
-  systemctl is-enabled pm2-root >/dev/null 2>&1 && ok "pm2 开机自启已配置"
+  if systemctl is-enabled pm2-root >/dev/null 2>&1; then
+    # 若 pm2 守护进程是 CLI 拉起的（未被 systemd 托管），让 systemd 接管：
+    # 先停掉再经 unit `pm2 resurrect` 从 dump 恢复 —— 这样才能享受到
+    # 开机自启 + 崩溃自动重启（否则 unit 会显示 inactive，不会看护它）。
+    if ! systemctl is-active --quiet pm2-root; then
+      log "让 systemd 接管 pm2（开机自启 + 崩溃自动重启）…"
+      pm2 kill >/dev/null 2>&1 || true
+      systemctl start pm2-root
+      sleep 2
+    fi
+    if systemctl is-active --quiet pm2-root; then
+      ok "pm2 已由 systemd 托管（开机自启）"
+    else
+      warn "pm2-root 未处于 active，请检查：systemctl status pm2-root"
+    fi
+  fi
 else
   STARTUP_CMD="$(pm2 startup 2>&1 | grep -E '^sudo env ' || true)"
   [ -n "$STARTUP_CMD" ] && { warn "请以 root 执行一次以配置开机自启："; printf '\n    %s\n\n' "$STARTUP_CMD"; }
