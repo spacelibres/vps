@@ -7,6 +7,17 @@
 
 ## [未发布]
 
+## [0.0.16] - 2026-10-08
+
+### 变更
+
+- `deploy/Caddyfile.template` 增加**分级缓存**与压缩（此前 `public/` 资源为 `max-age=0`，
+  每次访问都回源，尤其是 ip-pool 页面的国旗 PNG）：
+  - `/_next/static/*` → `public, max-age=31536000, immutable`（内容哈希，永久缓存）；
+  - `/_next/image` → `public, max-age=2592000`（30 天）；
+  - `public/` 静态资源（国旗 / 图标 / 字体 / 图片 / favicon）→ `public, max-age=2592000`；
+  - `encode zstd gzip`，并**排除 SSE 端点**（`/api/plugins/*/actions/stream`）避免缓冲。
+
 ## [0.0.15] - 2026-10-08
 
 ### 修复
