@@ -32,11 +32,11 @@ export default function OverviewPage() {
   const { setCurrentVeid } = useVps();
   const defaultPluginPath = `/plugins/${sortedPlugins[0]?.id ?? "lifecycle"}`;
 
-  /** 点卡片 = 选中这台 VPS，并进入它的默认插件页。 */
+  /** 点卡片 = 选中这台 VPS，并进入它的默认插件页（veid 带入 URL，便于刷新/分享）。 */
   const openServer = useCallback(
     (veid: string) => {
       setCurrentVeid(veid);
-      router.push(defaultPluginPath);
+      router.push(`${defaultPluginPath}?veid=${encodeURIComponent(veid)}`);
     },
     [router, defaultPluginPath, setCurrentVeid],
   );

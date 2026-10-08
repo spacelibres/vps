@@ -7,6 +7,22 @@
 
 ## [未发布]
 
+## [0.0.15] - 2026-10-08
+
+### 修复
+
+- **GET 动作被 405 拒绝**：`usePluginAction` 之前**总是 POST**，导致所有 `method: "GET"` 的动作
+  （`lifecycle/status`、`info/live`、`snapshot/list`、`account/getSshKeys` 等）报
+  「该动作只接受 GET（405）」。现根据动作元数据选择正确的 HTTP 方法。
+  - 新增 `sdk/ui/plugin-actions.tsx`（`PluginActionsProvider` / `useActionMeta`）：
+    宿主插件页把动作元数据（`id`/`method`）注入视图。
+  - 新增 `sdk/ui/action-request.ts`（纯逻辑 + 单测）：`GET` 走 query、`POST` 走 JSON body。
+- 动作路由缺少 `veid` 时的报错改为**可操作的提示**（“请在「当前 VPS」中选择一台…”）。
+
+### 变更
+
+- 「当前 VPS」选择同步到 URL `?veid=`：总览点卡片、侧边导航跳转、刷新 / 分享都不再丢失选择。
+
 ## [0.0.14] - 2026-10-08
 
 ### 修复

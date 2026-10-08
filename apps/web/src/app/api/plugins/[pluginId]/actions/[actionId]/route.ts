@@ -60,8 +60,11 @@ async function handle(req: Request, params: RouteParams["params"], method: "GET"
 
   const needsVps = action.needsVps !== false;
   if (needsVps && (!veid || !isKnownVeid(veid))) {
+    const message = !veid
+      ? "缺少 veid：请在页面顶部「当前 VPS」选择一台（或加 ?veid=<VEID>）"
+      : `未配置的 VPS：${veid}`;
     return NextResponse.json(
-      { ok: false, error: { code: 404, message: `未配置的 VPS：${veid || "(空)"}` } },
+      { ok: false, error: { code: 404, message } },
       { status: 404 },
     );
   }

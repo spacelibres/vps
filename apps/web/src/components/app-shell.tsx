@@ -6,7 +6,7 @@ import { useState, type ReactNode } from "react";
 import type { VpsTarget } from "@/sdk";
 import { Button } from "@/sdk/ui";
 import { sortedPlugins } from "@/plugins";
-import { VpsProvider } from "./vps-context";
+import { VpsProvider, useVps } from "./vps-context";
 
 const navItemClass = (active: boolean) =>
   `flex items-center gap-2 rounded-md px-3 py-2 text-sm transition ${
@@ -17,9 +17,13 @@ const navItemClass = (active: boolean) =>
 
 function NavLinks() {
   const pathname = usePathname();
+  const { currentVeid } = useVps();
+  // 带上当前 VPS，切换页面也能保持选择（刷新/分享不丢）。
+  const withVeid = (href: string) =>
+    currentVeid ? `${href}?veid=${encodeURIComponent(currentVeid)}` : href;
   return (
     <nav className="space-y-1">
-      <Link href="/" className={navItemClass(pathname === "/")}>
+      <Link href={withVeid("/")} className={navItemClass(pathname === "/")}>
         <span aria-hidden>▦</span>
         <span>总览</span>
       </Link>
@@ -30,7 +34,7 @@ function NavLinks() {
         const href = `/plugins/${plugin.id}`;
         const active = pathname === href || pathname.startsWith(`${href}/`);
         return (
-          <Link key={plugin.id} href={href} className={navItemClass(active)}>
+          <Link key={plugin.id} href={withVeid(href)} className={navItemClass(active)}>
             <span aria-hidden>{plugin.icon ?? "◆"}</span>
             <span>{plugin.name}</span>
           </Link>

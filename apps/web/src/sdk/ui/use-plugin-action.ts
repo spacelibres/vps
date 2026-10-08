@@ -1,6 +1,8 @@
 "use client";
 
 import { useCallback, useState } from "react";
+import { buildActionRequest } from "./action-request";
+import { useActionMeta } from "./plugin-actions";
 
 export interface ActionError {
   code: number;
@@ -16,21 +18,23 @@ export interface ActionState<T> {
 /**
  * 调用某个插件动作的 React hook。
  *
- * 它会 POST 到 `/api/plugins/<pluginId>/actions/<actionId>`，
- * 由宿主在服务端构造 `PluginContext` 并执行插件的 `run`。
+ * 请求方法取自插件动作元数据（由宿主页经 {@link PluginActionsProvider} 注入）：
+ * - `GET` 动作 → `GET ...?veid=...&<input>`；
+ * - `POST` 动作 → `POST` JSON `{ veid, input }`。
+ *
+ * 未拿到元数据时回退为 `POST`。
  */
 export function usePluginAction<T = unknown>(pluginId: string, actionId: string) {
   const [state, setState] = useState<ActionState<T>>({ running: false });
+  const meta = useActionMeta(actionId);
+  const method = meta?.method ?? "POST";
 
   const run = useCallback(
     async (veid: string, input?: unknown): Promise<T | undefined> => {
       setState({ running: true });
       try {
-        const res = await fetch(`/api/plugins/${pluginId}/actions/${actionId}`, {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({ veid, input }),
-        });
+        const { url, init } = buildActionRequest({ pluginId, actionId, method, veid, input });
+        const res = await fetch(url, init);
         const json = (await res.json()) as
           | { ok: true; data: T }
           | { ok: false; error: ActionError };
@@ -48,7 +52,7 @@ export function usePluginAction<T = unknown>(pluginId: string, actionId: string)
         return undefined;
       }
     },
-    [pluginId, actionId],
+    [pluginId, actionId, method],
   );
 
   const reset = useCallback(() => setState({ running: false }), []);

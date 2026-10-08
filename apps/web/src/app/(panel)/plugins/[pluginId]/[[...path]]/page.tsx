@@ -3,7 +3,7 @@
 import { useParams } from "next/navigation";
 import { useVps } from "@/components/vps-context";
 import { plugins } from "@/plugins";
-import { Alert } from "@/sdk/ui";
+import { Alert, PluginActionsProvider } from "@/sdk/ui";
 
 export default function PluginViewPage() {
   const params = useParams<{ pluginId: string; path?: string[] }>();
@@ -23,7 +23,11 @@ export default function PluginViewPage() {
   }
 
   const Component = view.Component;
+  // 把动作元数据（id/method）传给视图，供 usePluginAction 选择正确的 HTTP 方法。
+  const actionMeta = plugin.actions.map((action) => ({ id: action.id, method: action.method }));
   return (
-    <Component targets={targets} currentVeid={currentVeid} onSelectVps={setCurrentVeid} />
+    <PluginActionsProvider actions={actionMeta}>
+      <Component targets={targets} currentVeid={currentVeid} onSelectVps={setCurrentVeid} />
+    </PluginActionsProvider>
   );
 }
