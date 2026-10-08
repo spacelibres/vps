@@ -14,6 +14,8 @@ export interface IpPoolFetchConfig {
   connectTimeoutMs: number;
   /** 冷探活超时（毫秒）：尚未入热池的 IP，比总超时短。 */
   coldTimeoutMs: number;
+  /** 是否在面板打开时自动预热**整池**（`IP_POOL_AUTO_WARM=0` 可关闭）。 */
+  autoWarm: boolean;
   /** 弹道起点（`IP_POOL_ORIGIN="lat,lng[,label]"`）。 */
   origin?: { lat: number; lng: number; label?: string };
   poolFile: string;
@@ -43,6 +45,7 @@ export function fetchConfig(): IpPoolFetchConfig {
     timeoutMs: Number(process.env.IP_POOL_TIMEOUT_MS ?? DEFAULT_TIMEOUT_MS),
     connectTimeoutMs: Number(process.env.IP_POOL_CONNECT_TIMEOUT_MS ?? DEFAULT_CONNECT_TIMEOUT_MS),
     coldTimeoutMs: Number(process.env.IP_POOL_COLD_TIMEOUT_MS ?? DEFAULT_COLD_TIMEOUT_MS),
+    autoWarm: process.env.IP_POOL_AUTO_WARM !== "0",
     origin: parseOriginEnv(process.env.IP_POOL_ORIGIN),
     poolFile: resolvePoolFile(),
   };

@@ -18,7 +18,7 @@
  */
 import { z } from "zod";
 import { BasePlugin, defineAction, type PluginAction } from "@/sdk";
-import { batchStatus, hotIpList, isBatchRunning, startBatch } from "./batch";
+import { batchStatus, ensurePoolWarm, hotIpList, isBatchRunning, startBatch } from "./batch";
 import { fetchConfig } from "./config";
 import { IP_POOL_META } from "./descriptor";
 import { fetchOnce, type PinnedFetchResult } from "./fetch";
@@ -155,6 +155,7 @@ export const statsAction = defineAction({
   method: "GET",
   needsVps: false,
   run: () => {
+    ensurePoolWarm();
     const snap = getStore().snapshot();
     const { aggregate: _aggregate, ...pool } = snap.pool;
     const payload: StatsSnapshot = { ...snap, pool, hotIps: hotIpList() };

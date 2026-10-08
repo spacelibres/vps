@@ -54,6 +54,7 @@ export function resolveBatchTargets(options: FetchBatchOptions): HostPinRecord[]
 
 // ── 进程内单例热池（跨批次复用连接）──────────────────────
 let hotPool: HotConnectionPool | null = null;
+let warmStarted = false;
 
 function ensureHotPool(cfg: ReturnType<typeof fetchConfig>, url: string, browser: string, timeoutMs: number) {
   if (!hotPool) {
@@ -80,6 +81,26 @@ export function hotPoolStats(): FetchBatchStatus["pool"] {
 /** 当前已建立热连接的 IP 列表（供绿色通道可视化）。 */
 export function hotIpList(): string[] {
   return hotPool?.hotIpList() ?? [];
+}
+
+/**
+ * 确保**整池**在后台预热（进程内只做一次初始全量预热）。
+ *
+ * 不依赖「先跑一次批量抓取」：面板打开即触发，整个池子逐渐变为常驻热连接；
+ * 预热失败的 IP 由后台 `maintain` 持续重热。
+ */
+export function ensurePoolWarm(): void {
+  if (warmStarted) return;
+  const cfg = fetchConfig();
+  if (!cfg.autoWarm) return;
+  const pool = ensureHotPool(cfg, cfg.targetUrl, cfg.browser, cfg.timeoutMs);
+  try {
+    pool.register(loadPoolRecords(cfg.poolFile));
+  } catch {
+    return;
+  }
+  warmStarted = true;
+  void pool.warmAll();
 }
 
 /**

@@ -16,7 +16,6 @@ import {
   type PulseItem,
 } from "./pulses";
 import type {
-  FetchBatchStatus,
   FetchRequestRecord,
   FetchRouteOrigin,
   IpFetchStatRow,
@@ -36,8 +35,6 @@ const PLUGIN_ID = "ip-pool";
 const MAX_TABLE_ROWS = 200;
 /** 统计自动刷新间隔（毫秒）。 */
 const STATS_REFRESH_MS = 5000;
-/** 批量作业进度轮询间隔（毫秒）。 */
-const BATCH_POLL_MS = 3000;
 /** 心跳波保留的采样数（约 90 秒）。 */
 const HEARTBEAT_MAX = 90;
 const ARC_OPTIONS = {
@@ -170,7 +167,6 @@ export function IpPoolView(_props: PluginViewProps) {
   const [connected, setConnected] = useState(false);
   const [tileset, setTileset] = useState<string>("");
   const [error, setError] = useState<string | null>(null);
-  const [batch, setBatch] = useState<FetchBatchStatus | null>(null);
   const [metrics, setMetrics] = useState<StreamMetrics | null>(null);
   const [windowStat, setWindowStat] = useState<{ count: number; requests: number; bytes: number } | null>(null);
   const [focusIp, setFocusIp] = useState<string | null>(null);
@@ -348,27 +344,6 @@ export function IpPoolView(_props: PluginViewProps) {
     const id = setInterval(() => void refreshStats(), STATS_REFRESH_MS);
     return () => clearInterval(id);
   }, [refreshStats]);
-
-  // 批量作业进度自动轮询（展示外部触发的全池抓取）。
-  useEffect(() => {
-    let stopped = false;
-    const tick = async () => {
-      try {
-        const res = await fetch(`/api/plugins/${PLUGIN_ID}/actions/batchStatus`, { cache: "no-store" });
-        const json = (await res.json()) as { ok: boolean; data?: FetchBatchStatus };
-        if (stopped || !json.ok || !json.data) return;
-        setBatch(json.data);
-      } catch {
-        // 忽略；下一轮重试
-      }
-    };
-    void tick();
-    const id = setInterval(tick, BATCH_POLL_MS);
-    return () => {
-      stopped = true;
-      clearInterval(id);
-    };
-  }, []);
 
   // ── SSE 实时流 ──────────────────────────────────────────
   useEffect(() => {
@@ -694,7 +669,7 @@ export function IpPoolView(_props: PluginViewProps) {
           <span className={`inline-block h-2 w-2 rounded-full ${connected ? "bg-emerald-400" : "bg-red-500"}`} />
           {connected ? "实时已连接" : "实时未连接"}
           <span className="opacity-70">航线 {pulseCount}</span>
-          {metrics && <span className="opacity-70">热池 {metrics.hot}</span>}
+          {metrics && <span className="opacity-70">热池 {metrics.hot}/{metrics.poolTotal}</span>}
           {metrics && metrics.rps > 0 && <span className="opacity-70">{metrics.rps} 个/秒</span>}
           {tileset && <span className="opacity-70">{tileset}</span>}
         </div>
@@ -715,41 +690,6 @@ export function IpPoolView(_props: PluginViewProps) {
             </button>
           }
         >
-          {batch && batch.total > 0 && (
-            <div className="mb-3 rounded-md border border-neutral-200 px-2 py-1.5 text-xs dark:border-neutral-800">
-              <div className="flex items-center gap-2">
-                <StatusBadge tone={batch.running ? "warning" : "success"}>
-                  {batch.running ? "全池抓取中" : "全池抓取完成"}
-                </StatusBadge>
-                <span>
-                  {batch.done} / {batch.total}
-                </span>
-                {typeof batch.ratePerSec === "number" && batch.ratePerSec > 0 && (
-                  <span className="text-neutral-500">{batch.ratePerSec} 个/秒</span>
-                )}
-                <span className="ml-auto text-neutral-500">
-                  成功 {batch.success} · HTTP {batch.httpError} · 传输 {batch.transportError}
-                </span>
-              </div>
-              <div className="mt-1 h-1 w-full overflow-hidden rounded bg-neutral-200 dark:bg-neutral-800">
-                <div
-                  className="h-full bg-blue-500 transition-all"
-                  style={{ width: `${Math.round((batch.done / batch.total) * 100)}%` }}
-                />
-              </div>
-              {(batch.pool || batch.hotReused !== undefined) && (
-                <div className="mt-1 flex items-center gap-3 text-neutral-500">
-                  <span>热复用 {batch.hotReused ?? 0}</span>
-                  <span>新建 {batch.coldOpened ?? 0}</span>
-                  {batch.pool && (
-                    <span className="ml-auto">
-                      热池 {batch.pool.hot}/{batch.pool.total}
-                    </span>
-                  )}
-                </div>
-              )}
-            </div>
-          )}
           {error && (
             <div className="mb-3">
               <Alert tone="error">{error}</Alert>
