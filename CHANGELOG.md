@@ -7,6 +7,14 @@
 
 ## [未发布]
 
+## [0.0.38] - 2026-10-08
+
+### 新增
+
+- 热连接出网请求显式声明 `Accept-Encoding: gzip`（`hot-pool.ts`），让服务器可按 gzip 返回。
+  注：`kh.google.com/rt/earth/PlanetoidMetadata` 是 13 字节的 `application/x-protobuffer`，
+  服务端**不压缩**（响应无 `content-encoding`）—— 压缩与否由服务端决定。
+
 ## [0.0.37] - 2026-10-08
 
 ### 修复

@@ -68,6 +68,9 @@ interface Slot {
   nextReheatAt: number;
 }
 
+/** 出网请求声明的 `Accept-Encoding`。 */
+const ACCEPT_ENCODING = "gzip";
+
 const DEFAULTS = {
   successStatus: 200,
   deniedStatuses: [403, 429] as readonly number[],
@@ -223,6 +226,8 @@ export class HotConnectionPool {
   private createClient(ip: string): Client {
     return createClient({
       browser: this.options.browser as BrowserProfile,
+      // 明确声明可接受 gzip，让服务器按 gzip 返回（服务端是否压缩由其自行决定）。
+      headers: { "accept-encoding": ACCEPT_ENCODING },
       ...(this.options.proxy ? { proxy: this.options.proxy } : {}),
       dns: { hosts: { [this.options.hostname]: [ip] } },
       poolIdleTimeout: this.poolIdleTimeout,
