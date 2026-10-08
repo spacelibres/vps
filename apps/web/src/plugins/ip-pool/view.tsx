@@ -5,6 +5,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { defineView, type PluginView, type PluginViewProps } from "@/sdk";
 import { Alert, Card, EmptyState, KeyValue, Spinner, StatusBadge, TextInput } from "@/sdk/ui";
 import { createBingTileLayer } from "./bing";
+import { ipVisual } from "./flight";
 import type { PulseRouteLayer } from "./map-layer";
 import { createPulseRouteLayer } from "./map-layer";
 import {
@@ -24,6 +25,7 @@ import type {
   RoutePulse,
   StatsSnapshot,
   StoreSummary,
+  StreamMetrics,
   StreamPulse,
   StreamSnapshot,
 } from "./types";
@@ -36,6 +38,8 @@ const MAX_TABLE_ROWS = 200;
 const STATS_REFRESH_MS = 5000;
 /** 批量作业进度轮询间隔（毫秒）。 */
 const BATCH_POLL_MS = 3000;
+/** 心跳波保留的采样数（约 90 秒）。 */
+const HEARTBEAT_MAX = 90;
 const ARC_OPTIONS = {
   leoAltitudeMinKm: 12,
   leoAltitudeMaxKm: 48,
@@ -74,6 +78,61 @@ function outcomeTone(outcome: string): "success" | "warning" | "error" {
   return "error";
 }
 
+/** 格式化字节速率（B/s → 人类可读）。 */
+function formatBps(bps: number | null | undefined): string {
+  if (bps === null || bps === undefined) return "-";
+  const units = ["B/s", "KB/s", "MB/s", "GB/s"];
+  let value = bps;
+  let i = 0;
+  while (value >= 1024 && i < units.length - 1) {
+    value /= 1024;
+    i += 1;
+  }
+  return `${value.toFixed(i === 0 ? 0 : 1)} ${units[i]}`;
+}
+
+/** 请求速率心跳波：每秒一帧，绿色=成功、红色=失败，叠加最近峰值线。 */
+function drawHeartbeat(
+  canvas: HTMLCanvasElement | null,
+  samples: readonly { ok: number; fail: number }[],
+): void {
+  if (!canvas) return;
+  const ctx = canvas.getContext("2d");
+  if (!ctx) return;
+  const dpr = Math.min(window.devicePixelRatio || 1, 2);
+  const cssW = canvas.clientWidth || 640;
+  const cssH = canvas.clientHeight || 72;
+  const w = Math.max(1, Math.floor(cssW * dpr));
+  const h = Math.max(1, Math.floor(cssH * dpr));
+  if (canvas.width !== w || canvas.height !== h) {
+    canvas.width = w;
+    canvas.height = h;
+  }
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.clearRect(0, 0, cssW, cssH);
+
+  const peak = Math.max(1, ...samples.map((s) => s.ok + s.fail));
+  const n = samples.length;
+  if (n === 0) return;
+  const step = cssW / HEARTBEAT_MAX;
+  const baseY = cssH - 4;
+  const scale = (cssH - 10) / peak;
+
+  for (let i = 0; i < n; i += 1) {
+    const sample = samples[i]!;
+    const x = i * step;
+    const bw = Math.max(1, step - 1);
+    const okH = sample.ok * scale;
+    const failH = sample.fail * scale;
+    ctx.fillStyle = "#22c55e";
+    ctx.fillRect(x, baseY - okH, bw, okH);
+    if (failH > 0) {
+      ctx.fillStyle = "#ef4444";
+      ctx.fillRect(x, baseY - okH - failH, bw, failH);
+    }
+  }
+}
+
 /** 国旗（本地 flagcdn w20 PNG，位于 `public/flags/w20/{cc}.png`）。 */
 function Flag({ code }: { code?: string }) {
   if (!code || code === "未知" || code.length !== 2) return null;
@@ -91,6 +150,8 @@ function Flag({ code }: { code?: string }) {
 export function IpPoolView(_props: PluginViewProps) {
   const mapElRef = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<LeafletMap | null>(null);
+  const leafletRef = useRef<typeof import("leaflet") | null>(null);
+  const focusLayerRef = useRef<import("leaflet").LayerGroup | null>(null);
   const layerRef = useRef<PulseRouteLayer | null>(null);
   const pulsesRef = useRef<Map<string, RoutePulse>>(new Map());
   const catalogRef = useRef<Map<string, { lat: number; lng: number; city?: string; country?: string }>>(
@@ -110,6 +171,13 @@ export function IpPoolView(_props: PluginViewProps) {
   const [tileset, setTileset] = useState<string>("");
   const [error, setError] = useState<string | null>(null);
   const [batch, setBatch] = useState<FetchBatchStatus | null>(null);
+  const [metrics, setMetrics] = useState<StreamMetrics | null>(null);
+  const [windowStat, setWindowStat] = useState<{ count: number; requests: number; bytes: number } | null>(null);
+  const [focusIp, setFocusIp] = useState<string | null>(null);
+  const heartbeatRef = useRef<HTMLCanvasElement | null>(null);
+  const heartbeatSamplesRef = useRef<Array<{ ok: number; fail: number }>>([]);
+  const tbodyRef = useRef<HTMLTableSectionElement | null>(null);
+  const tableWrapRef = useRef<HTMLDivElement | null>(null);
   const [query, setQuery] = useState("");
   const [countryFilter, setCountryFilter] = useState<string | null>(null);
   const [sortKey, setSortKey] = useState<SortKey>("requests");
@@ -293,6 +361,14 @@ export function IpPoolView(_props: PluginViewProps) {
         })),
       );
     });
+    source.addEventListener("metrics", (event) => {
+      const data = JSON.parse((event as MessageEvent).data) as StreamMetrics;
+      setMetrics(data);
+      const samples = heartbeatSamplesRef.current;
+      samples.push({ ok: data.rpsOk, fail: data.rpsFail });
+      if (samples.length > HEARTBEAT_MAX) samples.splice(0, samples.length - HEARTBEAT_MAX);
+      drawHeartbeat(heartbeatRef.current, samples);
+    });
     source.addEventListener("error", () => setConnected(false));
     return () => source.close();
   }, [applyPulses, mapReady, seedFromCatalog]);
@@ -329,6 +405,8 @@ export function IpPoolView(_props: PluginViewProps) {
       const layer = createPulseRouteLayer(L, () => [...pulsesRef.current.values()]);
       layer.addTo(map);
       layerRef.current = layer;
+      leafletRef.current = L;
+      focusLayerRef.current = L.layerGroup().addTo(map);
       mapRef.current = map;
       setMapReady(true);
       setTimeout(() => map.invalidateSize(), 0);
@@ -351,10 +429,74 @@ export function IpPoolView(_props: PluginViewProps) {
     };
   }, []);
 
+  // 行点击 → 地图聚焦：脉冲标记 + 信息卡。
+  useEffect(() => {
+    const L = leafletRef.current;
+    const layer = focusLayerRef.current;
+    const map = mapRef.current;
+    if (!L || !layer || !map) return;
+    layer.clearLayers();
+    if (!focusIp) return;
+    const entry = catalogRef.current.get(focusIp);
+    if (!entry) return;
+    const color = ipVisual(focusIp).color;
+    L.circleMarker([entry.lat, entry.lng], {
+      radius: 7,
+      color,
+      weight: 2,
+      fillColor: color,
+      fillOpacity: 0.5,
+    })
+      .bindTooltip(
+        `<b>${focusIp}</b><br/>${[entry.country, entry.city].filter(Boolean).join(" · ")}`,
+        { permanent: true, direction: "top", className: "ip-focus-tip" },
+      )
+      .addTo(layer);
+    map.setView([entry.lat, entry.lng], Math.max(map.getZoom(), 4), { animate: true });
+  }, [focusIp, mapReady]);
+
   // 池子/原点就绪后补种骨架
   useEffect(() => {
     if (mapReady) seedFromCatalog();
   }, [mapReady, aggregate, seedFromCatalog]);
+
+  // 本屏窗口统计：只统计当前表格可视区域内的 IP。
+  useEffect(() => {
+    const root = tableWrapRef.current;
+    const tbody = tbodyRef.current;
+    if (!root || !tbody) {
+      setWindowStat(null);
+      return;
+    }
+    const byIp = new Map((snapshot?.rows ?? []).map((r) => [r.ip, r]));
+    const visible = new Set<string>();
+    const recompute = () => {
+      let requests = 0;
+      let bytes = 0;
+      for (const ip of visible) {
+        const row = byIp.get(ip);
+        if (!row) continue;
+        requests += row.requests;
+        bytes += row.totalBytes ?? 0;
+      }
+      setWindowStat({ count: visible.size, requests, bytes });
+    };
+    const observer = new IntersectionObserver(
+      (entries) => {
+        for (const entry of entries) {
+          const ip = (entry.target as HTMLElement).dataset.ip;
+          if (!ip) continue;
+          if (entry.isIntersecting) visible.add(ip);
+          else visible.delete(ip);
+        }
+        recompute();
+      },
+      { root, threshold: 0 },
+    );
+    for (const tr of tbody.querySelectorAll<HTMLElement>("tr[data-ip]")) observer.observe(tr);
+    recompute();
+    return () => observer.disconnect();
+  }, [snapshot, query, countryFilter, sortKey, sortDir]);
 
   const countryChips = useMemo(() => {
     const list = aggregate.map((c) => ({ code: c.country, total: c.total }));
@@ -433,6 +575,8 @@ export function IpPoolView(_props: PluginViewProps) {
           <span className={`inline-block h-2 w-2 rounded-full ${connected ? "bg-emerald-400" : "bg-red-500"}`} />
           {connected ? "实时已连接" : "实时未连接"}
           <span className="opacity-70">航线 {pulseCount}</span>
+          {metrics && <span className="opacity-70">热池 {metrics.hot}</span>}
+          {metrics && metrics.rps > 0 && <span className="opacity-70">{metrics.rps} 个/秒</span>}
           {tileset && <span className="opacity-70">{tileset}</span>}
         </div>
       </div>
@@ -480,14 +624,33 @@ export function IpPoolView(_props: PluginViewProps) {
             </div>
           )}
           {snapshot ? (
-            <div className="grid grid-cols-3 gap-3">
-              <KeyValue label="池 IP" value={snapshot.pool.total} />
-              <KeyValue label="IPv4 / IPv6" value={`${snapshot.pool.ipv4} / ${snapshot.pool.ipv6}`} />
-              <KeyValue label="国家 / 城市" value={`${snapshot.pool.countries} / ${snapshot.pool.cities}`} />
-              <KeyValue label="总请求" value={summary?.totalRequests ?? 0} />
-              <KeyValue label="成功率" value={successRate === null ? "-" : `${successRate}%`} />
-              <KeyValue label="总流量" value={formatBytes(summary?.totalBytes)} />
-            </div>
+            <>
+              <div className="grid grid-cols-3 gap-3">
+                <KeyValue label="池 IP" value={snapshot.pool.total} />
+                <KeyValue label="IPv4 / IPv6" value={`${snapshot.pool.ipv4} / ${snapshot.pool.ipv6}`} />
+                <KeyValue label="国家 / 城市" value={`${snapshot.pool.countries} / ${snapshot.pool.cities}`} />
+                <KeyValue label="总请求" value={summary?.totalRequests ?? 0} />
+                <KeyValue label="成功率" value={successRate === null ? "-" : `${successRate}%`} />
+                <KeyValue label="总流量" value={formatBytes(summary?.totalBytes)} />
+              </div>
+              <div className="mt-3 grid grid-cols-3 gap-3">
+                <KeyValue label="速率" value={metrics ? `${metrics.rps} 个/秒` : "-"} />
+                <KeyValue label="下载" value={formatBps(metrics?.rxBps)} />
+                <KeyValue label="上传" value={formatBps(metrics?.txBps)} />
+              </div>
+              <div className="mt-2">
+                <canvas
+                  ref={heartbeatRef}
+                  width={640}
+                  height={72}
+                  className="h-18 w-full rounded bg-neutral-50 dark:bg-neutral-950"
+                />
+                <p className="mt-0.5 text-xs text-neutral-500">
+                  心跳：绿=成功 红=失败（最近 {HEARTBEAT_MAX}s）
+                  {metrics ? ` · ${metrics.rpsOk} 成功 / ${metrics.rpsFail} 失败` : ""}
+                </p>
+              </div>
+            </>
           ) : (
             <Spinner label="正在加载池子…" />
           )}
@@ -564,14 +727,20 @@ export function IpPoolView(_props: PluginViewProps) {
         </Card>
 
         <Card title="统计">
+          {windowStat && windowStat.count > 0 && (
+            <p className="mb-2 text-xs text-neutral-500">
+              本屏 {windowStat.count} 个 IP · {windowStat.requests} 请求 · {formatBytes(windowStat.bytes)}
+            </p>
+          )}
           {rows.length === 0 ? (
             <EmptyState>{snapshot ? "还没有请求数据" : "加载中…"}</EmptyState>
           ) : (
-            <div className="max-h-72 overflow-auto">
+            <div ref={tableWrapRef} className="max-h-72 overflow-auto">
               <table className="w-full text-xs">
                 <thead className="sticky top-0 bg-white text-neutral-500 dark:bg-neutral-900">
                   <tr>
                     {th("ip", "IP", "left")}
+                    <th className="px-1 py-1 text-left">族</th>
                     <th className="px-1 py-1 text-left">地区</th>
                     {th("requests", "请求")}
                     {th("success", "成功")}
@@ -580,21 +749,37 @@ export function IpPoolView(_props: PluginViewProps) {
                     {th("avgDurationMs", "均耗时")}
                   </tr>
                 </thead>
-                <tbody className="font-mono">
-                  {rows.map((row) => (
-                    <tr key={row.ip} className="border-t border-neutral-100 dark:border-neutral-800">
-                      <td className="px-1 py-1">{row.ip}</td>
-                      <td className="px-1 py-1 text-neutral-500">
-                        <Flag code={row.country} />
-                        {[row.country, row.city].filter(Boolean).join(" · ") || "-"}
-                      </td>
-                      <td className="px-1 py-1 text-right">{row.requests}</td>
-                      <td className="px-1 py-1 text-right text-green-600">{row.success}</td>
-                      <td className="px-1 py-1 text-right text-red-500">{row.failed}</td>
-                      <td className="px-1 py-1 text-right">{formatBytes(row.totalBytes)}</td>
-                      <td className="px-1 py-1 text-right">{formatMs(row.avgDurationMs)}</td>
-                    </tr>
-                  ))}
+                <tbody ref={tbodyRef} className="font-mono">
+                  {rows.map((row) => {
+                    const hot = hotSetRef.current.has(row.ip);
+                    return (
+                      <tr
+                        key={row.ip}
+                        data-ip={row.ip}
+                        onClick={() => setFocusIp((prev) => (prev === row.ip ? null : row.ip))}
+                        className={`cursor-pointer border-t border-neutral-100 dark:border-neutral-800 ${
+                          focusIp === row.ip ? "bg-blue-50 dark:bg-blue-950" : ""
+                        }`}
+                      >
+                        <td className="px-1 py-1">
+                          {hot && <span className="mr-1 text-green-500">●</span>}
+                          {row.ip}
+                        </td>
+                        <td className="px-1 py-1 text-neutral-500">
+                          {row.ip.includes(":") ? "v6" : "v4"}
+                        </td>
+                        <td className="px-1 py-1 text-neutral-500">
+                          <Flag code={row.country} />
+                          {[row.country, row.city].filter(Boolean).join(" · ") || "-"}
+                        </td>
+                        <td className="px-1 py-1 text-right">{row.requests}</td>
+                        <td className="px-1 py-1 text-right text-green-600">{row.success}</td>
+                        <td className="px-1 py-1 text-right text-red-500">{row.failed}</td>
+                        <td className="px-1 py-1 text-right">{formatBytes(row.totalBytes)}</td>
+                        <td className="px-1 py-1 text-right">{formatMs(row.avgDurationMs)}</td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
             </div>

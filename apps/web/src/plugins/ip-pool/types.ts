@@ -296,6 +296,23 @@ export const EMPTY_BATCH_STATUS: FetchBatchStatus = {
   startedAt: 0,
 };
 
+/** SSE `metrics` 事件：请求速率 + 网卡流量 + 热池（约每秒一帧）。 */
+export interface StreamMetrics {
+  ts: number;
+  /** 本采样窗口内的请求数（个/秒）。 */
+  rps: number;
+  rpsOk: number;
+  rpsFail: number;
+  /** 网卡收发速率（字节/秒）；无数据为 null。 */
+  rxBps: number | null;
+  txBps: number | null;
+  /** 热池：已建连 IP 数。 */
+  hot: number;
+  poolTotal: number;
+  /** 累计请求数（用于前端对齐）。 */
+  totalRequests: number;
+}
+
 /** SSE `snapshot` 事件的形状。 */
 export interface StreamSnapshot {
   hostname: string;
