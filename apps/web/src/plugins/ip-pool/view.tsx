@@ -97,6 +97,7 @@ export function IpPoolView(_props: PluginViewProps) {
     new Map(),
   );
   const originRef = useRef<FetchRouteOrigin | null>(null);
+  const hotSetRef = useRef<Set<string>>(new Set());
   const didFitRef = useRef(false);
 
   const [mapReady, setMapReady] = useState(false);
@@ -130,9 +131,13 @@ export function IpPoolView(_props: PluginViewProps) {
       })),
       timing: DEFAULT_TIMING,
       arc: ARC_OPTIONS,
+      hotIps: hotSetRef.current,
     });
     for (const pulse of seed) {
-      if (!pulsesRef.current.has(pulse.id)) pulsesRef.current.set(pulse.id, pulse);
+      const existing = pulsesRef.current.get(pulse.id);
+      // 热状态会变（建连/掉线），已存在的骨架也要同步标记。
+      if (existing) existing.hot = pulse.hot;
+      else pulsesRef.current.set(pulse.id, pulse);
     }
     syncLayer();
     setPulseCount(pulsesRef.current.size);
@@ -154,6 +159,7 @@ export function IpPoolView(_props: PluginViewProps) {
         timing: DEFAULT_TIMING,
         arc: ARC_OPTIONS,
         now: performance.now(),
+        hotIps: hotSetRef.current,
       });
       if (changed > 0) {
         syncLayer();
@@ -178,11 +184,13 @@ export function IpPoolView(_props: PluginViewProps) {
       setSummary(json.data.summary);
       originRef.current = json.data.origin;
       setLog(json.data.recentRequests.slice(-200).reverse());
+      hotSetRef.current = new Set(json.data.hotIps ?? []);
+      seedFromCatalog();
       setError(null);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     }
-  }, []);
+  }, [seedFromCatalog]);
 
   // ── IP 池聚合（仅加载一次）──────────────────────────────
   const loadPool = useCallback(async () => {

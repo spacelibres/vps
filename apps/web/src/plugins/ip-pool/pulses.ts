@@ -5,6 +5,8 @@ import type { FetchRouteOrigin, RoutePulse } from "./types";
 export const IDLE_ROUTE_COLOR = "#64748b";
 /** 失败线路颜色。 */
 export const FAIL_ROUTE_COLOR = "#ef4444";
+/** 热连接线路颜色（绿色通道）。 */
+export const HOT_ROUTE_COLOR = "#22c55e";
 /** 未激活透明度。 */
 export const IDLE_ROUTE_ALPHA = 0.28;
 
@@ -56,9 +58,11 @@ export interface SeedArgs {
   ips: Array<{ ip: string; lat: number; lng: number }>;
   timing: ArcTiming;
   arc: ArcOptions;
+  /** 已建立常驻热连接的 IP（绿色通道）。 */
+  hotIps?: ReadonlySet<string>;
 }
 
-/** 由池子目录预绘全部落点的灰色骨架（同坐标只一条）。 */
+/** 由池子目录预绘全部落点的灰色骨架（同坐标只一条；热连接 IP 标记为绿色通道）。 */
 export function buildSeedPulses(args: SeedArgs): RoutePulse[] {
   const byKey = new Map<string, { lat: number; lng: number; ip: string }>();
   for (const item of args.ips) {
@@ -82,6 +86,7 @@ export function buildSeedPulses(args: SeedArgs): RoutePulse[] {
       fadeMs: args.timing.fadeMs,
       pinnedIp: ip,
       active: false,
+      hot: args.hotIps?.has(ip) ?? false,
     });
   }
   return pulses;
@@ -103,6 +108,8 @@ export interface ActivateArgs {
   timing: ArcTiming;
   arc: ArcOptions;
   now: number;
+  /** 已建立常驻热连接的 IP（绿色通道）。 */
+  hotIps?: ReadonlySet<string>;
 }
 
 /**
@@ -116,6 +123,7 @@ export function activatePulses(
   args: ActivateArgs,
 ): number {
   const { origin, catalog, timing, arc, now } = args;
+  const hotIps = args.hotIps ?? new Set<string>();
   let changed = 0;
 
   const byRoute = new Map<string, { item: PulseItem; lat: number; lng: number }>();
@@ -148,6 +156,7 @@ export function activatePulses(
       existing.holdMs = timing.holdMs;
       existing.fadeMs = timing.fadeMs;
       existing.pinnedIp = item.ip;
+      existing.hot = hotIps.has(item.ip);
       // 已点亮：只续命到 hold 段，不重头播绘线
       existing.bornAt = existing.active ? now - timing.drawMs - staggerMs : now - staggerMs;
       existing.active = true;
@@ -165,6 +174,7 @@ export function activatePulses(
         fadeMs: timing.fadeMs,
         pinnedIp: item.ip,
         active: true,
+        hot: hotIps.has(item.ip),
       });
     }
     changed += 1;

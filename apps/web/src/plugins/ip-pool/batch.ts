@@ -63,6 +63,8 @@ function ensureHotPool(cfg: ReturnType<typeof fetchConfig>, url: string, browser
       browser,
       proxy: cfg.proxy,
       timeoutMs,
+      connectTimeoutMs: cfg.connectTimeoutMs,
+      coldTimeoutMs: cfg.coldTimeoutMs,
       warmConcurrency: WARM_CONCURRENCY,
     });
     hotPool.startBackground();
@@ -73,6 +75,11 @@ function ensureHotPool(cfg: ReturnType<typeof fetchConfig>, url: string, browser
 /** 供其它动作（如单次 `fetch`）复用热池。 */
 export function hotPoolStats(): FetchBatchStatus["pool"] {
   return hotPool?.stats();
+}
+
+/** 当前已建立热连接的 IP 列表（供绿色通道可视化）。 */
+export function hotIpList(): string[] {
+  return hotPool?.hotIpList() ?? [];
 }
 
 /**

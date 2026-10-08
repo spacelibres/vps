@@ -4,6 +4,8 @@ import type { RoutePulse } from "./types";
 type Leaflet = typeof import("leaflet");
 
 const IDLE_ROUTE_ALPHA = 0.28;
+/** 热连接（绿色通道）颜色。 */
+const HOT_ROUTE_COLOR = "#22c55e";
 
 /** 地图上的脉冲航线图层（canvas 自绘，支持世界副本）。 */
 export interface PulseRouteLayer extends Layer {
@@ -232,6 +234,26 @@ export function createPulseRouteLayer(
 
       for (const pulse of live) {
         if (pulse.latlngs.length < 2) continue;
+
+        // 热连接：绿色实线（绿色通道），常驻不淡出
+        if (pulse.hot) {
+          ctx.globalAlpha = pulse.active ? 0.95 : 0.7;
+          ctx.strokeStyle = HOT_ROUTE_COLOR;
+          ctx.lineWidth = 2;
+          ctx.setLineDash([]);
+          for (const off of lngOffsets) {
+            strokeLatLngPath(ctx, mapInst, pulse.latlngs, off);
+            const head = pulse.latlngs[pulse.latlngs.length - 1]!;
+            const hp = mapInst.latLngToContainerPoint([head.lat, head.lng + off]);
+            ctx.fillStyle = HOT_ROUTE_COLOR;
+            ctx.beginPath();
+            ctx.arc(hp.x, hp.y, 2.6, 0, Math.PI * 2);
+            ctx.fill();
+          }
+          ctx.lineWidth = 1.5;
+          ctx.setLineDash([7, 9]);
+          continue;
+        }
 
         // 未激活：灰色常驻全长，作为预热骨架
         if (!pulse.active) {

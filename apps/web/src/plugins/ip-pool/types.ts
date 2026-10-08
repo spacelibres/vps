@@ -208,7 +208,11 @@ export interface PoolCounts {
 }
 
 /** `stats` 动作返回：快照但不含池子聚合（聚合由 `pool` 动作单独提供）。 */
-export type StatsSnapshot = Omit<StoreSnapshot, "pool"> & { pool: PoolCounts };
+export type StatsSnapshot = Omit<StoreSnapshot, "pool"> & {
+  pool: PoolCounts;
+  /** 已建立常驻热连接的 IP（绿色通道）。运行时信息，不落盘。 */
+  hotIps?: string[];
+};
 
 /** `pool` 动作返回：计数 + 聚合树。 */
 export interface PoolPayload {
@@ -325,6 +329,8 @@ export interface RoutePulse {
   fadeMs: number;
   pinnedIp?: string;
   active: boolean;
+  /** 该 IP 已建立常驻热连接（绿色通道）。 */
+  hot?: boolean;
 }
 export interface StoreSnapshot {
   hostname: string;

@@ -23,8 +23,12 @@ export interface HotPoolOptions {
   warmupUrl: string;
   browser: string;
   proxy?: string;
-  /** 单次请求超时（毫秒）。 */
+  /** 单次请求总超时（毫秒）。 */
   timeoutMs: number;
+  /** 连接建立超时（毫秒）；不可达 IP 快速失败。 */
+  connectTimeoutMs?: number;
+  /** 冷探活（尚未入热池）的请求超时（毫秒）；比 `timeoutMs` 短，避免死 IP 拖尾。 */
+  coldTimeoutMs?: number;
   /** 预热 / 重热 / 保活并发。 */
   warmConcurrency: number;
   successStatus?: number;
@@ -80,6 +84,8 @@ const DEFAULTS = {
   poolMaxIdlePerHost: 1,
   idleExpireMs: 60_000,
   keepAliveConcurrency: 32,
+  connectTimeoutMs: 4000,
+  coldTimeoutMs: 6000,
 };
 
 export class HotConnectionPool {
@@ -92,6 +98,8 @@ export class HotConnectionPool {
   private readonly poolMaxIdlePerHost: number;
   private readonly idleExpireMs: number;
   private readonly keepAliveConcurrency: number;
+  private readonly connectTimeoutMs: number;
+  private readonly coldTimeoutMs: number;
   private readonly slots = new Map<string, Slot>();
   private readonly hotIps: string[] = [];
   private readonly deniedIps = new Set<string>();
@@ -107,6 +115,8 @@ export class HotConnectionPool {
     this.poolMaxIdlePerHost = options.poolMaxIdlePerHost ?? DEFAULTS.poolMaxIdlePerHost;
     this.idleExpireMs = options.idleExpireMs ?? DEFAULTS.idleExpireMs;
     this.keepAliveConcurrency = options.keepAliveConcurrency ?? DEFAULTS.keepAliveConcurrency;
+    this.connectTimeoutMs = options.connectTimeoutMs ?? DEFAULTS.connectTimeoutMs;
+    this.coldTimeoutMs = options.coldTimeoutMs ?? DEFAULTS.coldTimeoutMs;
   }
 
   /** 注册池内 IP（幂等）。 */
@@ -153,6 +163,11 @@ export class HotConnectionPool {
     return this.hotIps.length;
   }
 
+  /** 当前已建立热连接的 IP 列表（绿色通道）。 */
+  hotIpList(): string[] {
+    return [...this.hotIps];
+  }
+
   /** 取一条热 IP（公平选路，可偏向复用最近连接）。 */
   pickHot(warmSlack = 0): string | undefined {
     const candidates = this.hotIps
@@ -185,11 +200,13 @@ export class HotConnectionPool {
     const reuse = slot.client;
     const via: "hot" | "new" = reuse ? "hot" : "new";
     const client = reuse ?? this.createClient(ip);
+    // 冷探活用更短超时：尚未入热池的 IP 若是死的，不应拖满总超时。
+    const timeout = reuse ? this.options.timeoutMs : this.coldTimeoutMs;
     slot.assignCount += 1;
 
     const started = Date.now();
     try {
-      const res = await client.get(url, { timeout: this.options.timeoutMs });
+      const res = await client.get(url, { timeout });
       const buf = new Uint8Array(await res.arrayBuffer());
       const durationMs = Date.now() - started;
       slot.lastStatus = res.status;
@@ -251,6 +268,7 @@ export class HotConnectionPool {
       poolMaxIdlePerHost: this.poolMaxIdlePerHost,
       connectionGroup: ip,
       timeout: this.options.timeoutMs,
+      connectTimeout: this.connectTimeoutMs,
     });
   }
 
@@ -264,7 +282,7 @@ export class HotConnectionPool {
 
     const client = this.createClient(ip);
     try {
-      const res = await client.get(this.options.warmupUrl, { timeout: this.options.timeoutMs });
+      const res = await client.get(this.options.warmupUrl, { timeout: this.coldTimeoutMs });
       const outcome =
         res.status === this.successStatus ? "hot" : this.deniedStatuses.includes(res.status) ? "denied" : "retry";
       await res.arrayBuffer().catch(() => undefined);
