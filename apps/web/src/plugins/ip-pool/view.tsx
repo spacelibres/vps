@@ -3,7 +3,7 @@
 import type { Map as LeafletMap } from "leaflet";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { defineView, type PluginView, type PluginViewProps } from "@/sdk";
-import { Alert, Button, Card, EmptyState, KeyValue, Spinner, StatusBadge, TextInput } from "@/sdk/ui";
+import { Alert, Card, EmptyState, KeyValue, Spinner, StatusBadge, TextInput } from "@/sdk/ui";
 import { createBingTileLayer } from "./bing";
 import type { PulseRouteLayer } from "./map-layer";
 import { createPulseRouteLayer } from "./map-layer";
@@ -15,7 +15,6 @@ import {
   type PulseItem,
 } from "./pulses";
 import type {
-  FetchActionResult,
   FetchBatchStatus,
   FetchRequestRecord,
   FetchRouteOrigin,
@@ -33,6 +32,10 @@ import "leaflet/dist/leaflet.css";
 
 const PLUGIN_ID = "ip-pool";
 const MAX_TABLE_ROWS = 200;
+/** 统计自动刷新间隔（毫秒）。 */
+const STATS_REFRESH_MS = 5000;
+/** 批量作业进度轮询间隔（毫秒）。 */
+const BATCH_POLL_MS = 3000;
 const ARC_OPTIONS = {
   leoAltitudeMinKm: 12,
   leoAltitudeMaxKm: 48,
@@ -105,9 +108,6 @@ export function IpPoolView(_props: PluginViewProps) {
   const [connected, setConnected] = useState(false);
   const [tileset, setTileset] = useState<string>("");
   const [error, setError] = useState<string | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [fetching, setFetching] = useState(false);
-  const [lastFetch, setLastFetch] = useState<FetchActionResult | null>(null);
   const [batch, setBatch] = useState<FetchBatchStatus | null>(null);
   const [query, setQuery] = useState("");
   const [countryFilter, setCountryFilter] = useState<string | null>(null);
@@ -163,10 +163,8 @@ export function IpPoolView(_props: PluginViewProps) {
     [syncLayer],
   );
 
-  // ── 拉取统计快照 ────────────────────────────────────────
-  const loadStats = useCallback(async () => {
-    setLoading(true);
-    setError(null);
+  // ── 统计快照（自动刷新，无需手动）──────────────────────
+  const refreshStats = useCallback(async () => {
     try {
       const res = await fetch(`/api/plugins/${PLUGIN_ID}/actions/stats`, { cache: "no-store" });
       const json = (await res.json()) as
@@ -180,108 +178,72 @@ export function IpPoolView(_props: PluginViewProps) {
       setSummary(json.data.summary);
       originRef.current = json.data.origin;
       setLog(json.data.recentRequests.slice(-200).reverse());
-
-      const poolRes = await fetch(`/api/plugins/${PLUGIN_ID}/actions/pool`, { cache: "no-store" });
-      const poolJson = (await poolRes.json()) as
-        | { ok: true; data: PoolPayload }
-        | { ok: false; error: { message: string } };
-      if (poolJson.ok) {
-        setAggregate(poolJson.data.pool.aggregate);
-        const catalog = catalogRef.current;
-        catalog.clear();
-        for (const country of poolJson.data.pool.aggregate) {
-          for (const city of country.cities) {
-            for (const ip of city.ips) {
-              if (!ip.point) continue;
-              catalog.set(ip.ip, {
-                lat: ip.point.lat,
-                lng: ip.point.lng,
-                city: city.city,
-                country: country.country,
-              });
-            }
-          }
-        }
-        seedFromCatalog();
-      }
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
-    } finally {
-      setLoading(false);
-    }
-  }, [seedFromCatalog]);
-
-  // ── 全池抓取（后台作业，进度轮询） ──────────────────────
-  const runBatch = useCallback(async () => {
-    setError(null);
-    try {
-      const res = await fetch(`/api/plugins/${PLUGIN_ID}/actions/fetchBatch`, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ input: {} }),
-        cache: "no-store",
-      });
-      const json = (await res.json()) as
-        | { ok: true; data: FetchBatchStatus }
-        | { ok: false; error: { message: string } };
-      if (!json.ok) {
-        setError(json.error.message);
-        return;
-      }
-      setBatch(json.data);
+      setError(null);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     }
   }, []);
 
+  // ── IP 池聚合（仅加载一次）──────────────────────────────
+  const loadPool = useCallback(async () => {
+    try {
+      const res = await fetch(`/api/plugins/${PLUGIN_ID}/actions/pool`, { cache: "no-store" });
+      const json = (await res.json()) as
+        | { ok: true; data: PoolPayload }
+        | { ok: false; error: { message: string } };
+      if (!json.ok) return;
+      setAggregate(json.data.pool.aggregate);
+      const catalog = catalogRef.current;
+      catalog.clear();
+      for (const country of json.data.pool.aggregate) {
+        for (const city of country.cities) {
+          for (const ip of city.ips) {
+            if (!ip.point) continue;
+            catalog.set(ip.ip, {
+              lat: ip.point.lat,
+              lng: ip.point.lng,
+              city: city.city,
+              country: country.country,
+            });
+          }
+        }
+      }
+      seedFromCatalog();
+    } catch {
+      // 池子加载失败不阻塞页面
+    }
+  }, [seedFromCatalog]);
+
   useEffect(() => {
-    if (!batch?.running) return;
+    void loadPool();
+    void refreshStats();
+  }, [loadPool, refreshStats]);
+
+  // 统计数据自动刷新。
+  useEffect(() => {
+    const id = setInterval(() => void refreshStats(), STATS_REFRESH_MS);
+    return () => clearInterval(id);
+  }, [refreshStats]);
+
+  // 批量作业进度自动轮询（展示外部触发的全池抓取）。
+  useEffect(() => {
     let stopped = false;
-    const id = setInterval(async () => {
+    const tick = async () => {
       try {
         const res = await fetch(`/api/plugins/${PLUGIN_ID}/actions/batchStatus`, { cache: "no-store" });
         const json = (await res.json()) as { ok: boolean; data?: FetchBatchStatus };
         if (stopped || !json.ok || !json.data) return;
         setBatch(json.data);
-        if (!json.data.running) void loadStats();
       } catch {
-        // 轮询失败忽略；下轮重试
+        // 忽略；下一轮重试
       }
-    }, 1000);
+    };
+    void tick();
+    const id = setInterval(tick, BATCH_POLL_MS);
     return () => {
       stopped = true;
       clearInterval(id);
     };
-  }, [batch?.running, loadStats]);
-
-  useEffect(() => {
-    void loadStats();
-  }, [loadStats]);
-
-  // ── 真实抓取一次（node-wreq 指纹 + 钉池内 IP） ───────────
-  const runFetch = useCallback(async () => {
-    setFetching(true);
-    setError(null);
-    try {
-      const res = await fetch(`/api/plugins/${PLUGIN_ID}/actions/fetch`, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ input: {} }),
-        cache: "no-store",
-      });
-      const json = (await res.json()) as
-        | { ok: true; data: FetchActionResult }
-        | { ok: false; error: { message: string } };
-      if (!json.ok) {
-        setError(json.error.message);
-        return;
-      }
-      setLastFetch(json.data);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
-    } finally {
-      setFetching(false);
-    }
   }, []);
 
   // ── SSE 实时流 ──────────────────────────────────────────
@@ -468,22 +430,7 @@ export function IpPoolView(_props: PluginViewProps) {
       </div>
 
       <aside className="w-104 shrink-0 space-y-4 overflow-y-auto pr-1">
-        <Card
-          title="概览"
-          actions={
-            <div className="flex gap-2">
-              <Button variant="ghost" onClick={() => void runBatch()} disabled={batch?.running === true}>
-                {batch?.running ? "抓取中…" : "全池抓取（全速）"}
-              </Button>
-              <Button onClick={() => void runFetch()} disabled={fetching}>
-                {fetching ? <Spinner label="抓取中" /> : "抓取一次"}
-              </Button>
-              <Button variant="ghost" onClick={() => void loadStats()} disabled={loading}>
-                {loading ? <Spinner label="刷新中" /> : "刷新"}
-              </Button>
-            </div>
-          }
-        >
+        <Card title="概览">
           {batch && batch.total > 0 && (
             <div className="mb-3 rounded-md border border-neutral-200 px-2 py-1.5 text-xs dark:border-neutral-800">
               <div className="flex items-center gap-2">
@@ -511,21 +458,6 @@ export function IpPoolView(_props: PluginViewProps) {
           {error && (
             <div className="mb-3">
               <Alert tone="error">{error}</Alert>
-            </div>
-          )}
-          {lastFetch && (
-            <div className="mb-3 rounded-md border border-neutral-200 px-2 py-1.5 text-xs dark:border-neutral-800">
-              <span className="flex items-center gap-2">
-                <StatusBadge tone={outcomeTone(lastFetch.outcome)}>{lastFetch.outcome}</StatusBadge>
-                {lastFetch.status !== undefined && <span>{lastFetch.status}</span>}
-                <span className="font-mono">{lastFetch.pinnedIp ?? "未钉 IP"}</span>
-                <span className="ml-auto text-neutral-500">
-                  {formatMs(lastFetch.durationMs)} · {formatBytes(lastFetch.bytes)}
-                </span>
-              </span>
-              {lastFetch.error && (
-                <div className="mt-1 break-all font-mono text-red-500">{lastFetch.error}</div>
-              )}
             </div>
           )}
           {snapshot ? (
