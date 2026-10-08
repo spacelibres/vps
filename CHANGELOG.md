@@ -7,6 +7,21 @@
 
 ## [未发布]
 
+## [0.0.10] - 2026-10-08
+
+### 修复
+
+- **登录失败（服务已部署）**：会话 cookie 的 `Secure` 改为**按请求协议自适应**（新增 `useSecureCookie`）。
+  之前生产环境恒为 `Secure`，在纯 HTTP 下浏览器会直接丢弃 cookie，表现为「密码正确却登录不上」。
+  现：HTTPS → 加 `Secure`；纯 HTTP → 不加；可用 `PANEL_COOKIE_SECURE`（`1`/`0`）强制覆盖。
+  `logout` 同样自适应。
+- `deploy/install.sh` 结束提示里的 `%s` 占位符展示错误。
+
+### 新增
+
+- `src/lib/session.test.ts`：`useSecureCookie` 单测（HTTP/HTTPS/转发头/覆盖）。
+- `.env.example` 登记 `PANEL_COOKIE_SECURE`。
+
 ## [0.0.9] - 2026-10-08
 
 ### 修复

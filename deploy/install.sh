@@ -214,7 +214,7 @@ fi
 sleep 2
 pm2 describe "$APP_NAME" 2>/dev/null | grep -E 'status|restarts|uptime' || true
 printf '\n'
-ok "部署完成 → http://<服务器IP>:%s" "$PORT"
+ok "部署完成 → http://<服务器IP>:$PORT"
 if [ -n "$GENERATED_PW" ]; then
   warn "已为你生成面板密码：$GENERATED_PW   （请自行保存，可改 apps/web/.env 后重启）"
 fi

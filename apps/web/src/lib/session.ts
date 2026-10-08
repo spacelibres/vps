@@ -36,3 +36,22 @@ export async function verifySessionToken(token: string | undefined | null): Prom
     return false;
   }
 }
+
+/**
+ * 会话 cookie 是否加 `Secure` 属性。
+ *
+ * 纯 HTTP 下若加了 `Secure`，浏览器会**直接丢弃**该 cookie，表现为「密码对但登录不上」。
+ * 因此默认按请求协议自适应（HTTPS → Secure），并可用 `PANEL_COOKIE_SECURE` 强行覆盖。
+ */
+export function useSecureCookie(req: Request): boolean {
+  const override = process.env.PANEL_COOKIE_SECURE?.trim().toLowerCase();
+  if (override === "1" || override === "true" || override === "yes") return true;
+  if (override === "0" || override === "false" || override === "no") return false;
+  const forwarded = req.headers.get("x-forwarded-proto")?.split(",")[0]?.trim().toLowerCase();
+  if (forwarded) return forwarded === "https";
+  try {
+    return new URL(req.url).protocol === "https:";
+  } catch {
+    return false;
+  }
+}

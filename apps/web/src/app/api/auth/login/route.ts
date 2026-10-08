@@ -6,6 +6,7 @@ import {
   SESSION_MAX_AGE,
   createSessionToken,
   isSessionConfigured,
+  useSecureCookie,
 } from "@/lib/session";
 
 const BodySchema = z.object({ password: z.string().min(1) });
@@ -34,7 +35,7 @@ export async function POST(req: Request) {
   res.cookies.set(SESSION_COOKIE, token, {
     httpOnly: true,
     sameSite: "lax",
-    secure: process.env.NODE_ENV === "production",
+    secure: useSecureCookie(req),
     path: "/",
     maxAge: SESSION_MAX_AGE,
   });
