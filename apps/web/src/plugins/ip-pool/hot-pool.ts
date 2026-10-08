@@ -226,8 +226,9 @@ export class HotConnectionPool {
   private createClient(ip: string): Client {
     return createClient({
       browser: this.options.browser as BrowserProfile,
-      // 明确声明可接受 gzip，让服务器按 gzip 返回（服务端是否压缩由其自行决定）。
+      // 声明可接受 gzip，且**不做透明解压**：body 保留服务器原始字节（gzip 时为 gzip）。
       headers: { "accept-encoding": ACCEPT_ENCODING },
+      compress: false,
       ...(this.options.proxy ? { proxy: this.options.proxy } : {}),
       dns: { hosts: { [this.options.hostname]: [ip] } },
       poolIdleTimeout: this.poolIdleTimeout,
