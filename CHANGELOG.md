@@ -7,6 +7,20 @@
 
 ## [未发布]
 
+## [0.0.13] - 2026-10-08
+
+### 变更
+
+- `deploy/install.sh` 升级为**全自动、零人工干预**：
+  - 自动安装系统依赖（git / curl / openssl / ca-certificates）；
+  - 小内存机器（< 3GB 且无 swap）自动创建 2G swap；
+  - 未提供 `PANEL_PASSWORD` 且非交互时**自动生成并打印**；
+  - **自动探测域名**（`hostname -f` 解析到本机）→ 探测到则自动配置 Caddy 443 自动 HTTPS，
+    并把面板改为**仅监听 `127.0.0.1`**；Caddy 失败则自动回退为公网 `:PORT`；
+  - root 下自动完成 `pm2 startup` 开机自启（不再需要手敲 sudo 命令）；
+  - 新增开关 `NO_CADDY` / `SKIP_SWAP`。
+- `README.md` 重写部署章节（一行命令、全自动说明、环境变量表）。
+
 ## [0.0.12] - 2026-10-08
 
 ### 修复

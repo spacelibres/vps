@@ -1,51 +1,50 @@
 #!/usr/bin/env bash
 #
-# 一键安装 / 更新 —— VPS 管理面板（Next.js 15 + pm2）
+# 一键安装 / 更新 —— VPS 管理面板（Next.js 15 + pm2 + Caddy 自动 HTTPS）
 #
-# 方式 A（在已克隆的仓库里）：
-#   bash deploy/install.sh
+# 全自动：缺什么装什么，无需人工干预。
 #
-# 方式 B（一行命令，自动克隆到 /opt/vps-panel 后安装）：
+# 方式 A（一行命令，自动克隆到 /opt/vps-panel 后安装）：
 #   curl -fsSL https://raw.githubusercontent.com/spacelibres/vps/main/deploy/install.sh | bash
 #
-# 可用环境变量：
-#   PANEL_PASSWORD=xxx    面板登录密码（不传则交互询问 / 随机生成）
-#   PORT=8080             监听端口（默认 3000）
-#   HOST=127.0.0.1        监听地址（默认 0.0.0.0）
+# 方式 B（在已克隆的仓库里）：
+#   bash deploy/install.sh
+#
+# 可选环境变量（都不填也能跑）：
+#   PANEL_PASSWORD=xxx    面板登录密码（不填则交互询问；非交互则自动生成并打印）
+#   DOMAIN=panel.example.com   对外域名（不填则自动探测 hostname -f 是否解析到本机）
+#   EMAIL=me@example.com  ACME 账号邮箱（可选）
+#   PORT=8080             面板端口（默认 3000；仅在未启用 Caddy 时对外暴露）
+#   HOST=127.0.0.1        监听地址（默认：启用 Caddy 时 127.0.0.1，否则 0.0.0.0）
 #   APP_NAME=my-panel     pm2 进程名（默认 vps-panel）
-#   INSTALL_DIR=/opt/...  方式 B 的克隆目录（默认 /opt/vps-panel）
-#   INSTALL_NODE=0        禁止在缺 Node 时自动安装（默认允许，仅 Debian/Ubuntu）
-#   DOMAIN=panel.example.com  设置后自动用 Caddy 把 443 → 127.0.0.1:PORT（自动 HTTPS）
-#   EMAIL=me@example.com  可选，ACME 账号邮箱
+#   INSTALL_DIR=/opt/...  方式 A 的克隆目录（默认 /opt/vps-panel）
+#   INSTALL_NODE=0        禁止自动安装 Node（默认允许）
+#   NO_CADDY=1            禁用 Caddy / 自动 HTTPS
+#   SKIP_SWAP=1           不自动创建 swap
 #
 set -euo pipefail
 
 APP_NAME="${APP_NAME:-vps-panel}"
 PORT="${PORT:-3000}"
-HOST="${HOST:-0.0.0.0}"
+REQUESTED_HOST="${HOST:-}"
 INSTALL_DIR="${INSTALL_DIR:-/opt/vps-panel}"
 REPO_URL="${REPO_URL:-https://github.com/spacelibres/vps.git}"
-export APP_NAME PORT HOST
 
 log()  { printf '\033[1;34m▸\033[0m %s\n' "$*"; }
 ok()   { printf '\033[1;32m✓\033[0m %s\n' "$*"; }
 warn() { printf '\033[1;33m!\033[0m %s\n' "$*"; }
 die()  { printf '\033[1;31m✗\033[0m %s\n' "$*" >&2; exit 1; }
 
-gen_secret() {
-  if command -v openssl >/dev/null 2>&1; then
-    openssl rand -hex 32
-  else
-    head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \n'
-  fi
-}
+is_root() { [ "$(id -u)" = "0" ]; }
+have()    { command -v "$1" >/dev/null 2>&1; }
 
+gen_secret() {
+  if have openssl; then openssl rand -hex 32
+  else head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \n'; fi
+}
 gen_password() {
-  if command -v openssl >/dev/null 2>&1; then
-    openssl rand -base64 24 | tr -dc 'A-Za-z0-9' | cut -c1-16
-  else
-    head -c 24 /dev/urandom | base64 | tr -dc 'A-Za-z0-9' | cut -c1-16
-  fi
+  if have openssl; then openssl rand -base64 24 | tr -dc 'A-Za-z0-9' | cut -c1-16
+  else head -c 24 /dev/urandom | base64 | tr -dc 'A-Za-z0-9' | cut -c1-16; fi
 }
 
 # 幂等写入/覆盖某个键（删旧行后追加；dotenv 后出现的键生效）。
@@ -66,16 +65,12 @@ ROOT_DIR="$(cd "$SCRIPT_DIR/.." 2>/dev/null && pwd || echo "$SCRIPT_DIR")"
 
 if [ ! -d "$ROOT_DIR/apps/web" ]; then
   log "当前不在仓库内，准备克隆到 $INSTALL_DIR"
-  command -v git >/dev/null 2>&1 || {
-    if command -v apt-get >/dev/null 2>&1; then
-      apt-get update -y && apt-get install -y git
-    else
-      die "缺少 git，请先安装 git"
-    fi
-  }
+  if ! have git; then
+    if have apt-get; then apt-get update -y >/dev/null 2>&1 || true; apt-get install -y git >/dev/null 2>&1 || apt-get install -y git; fi
+  fi
+  have git || die "缺少 git，请先安装 git"
   if [ -d "$INSTALL_DIR/.git" ]; then
-    log "仓库已存在，执行 git pull…"
-    git -C "$INSTALL_DIR" pull --ff-only
+    git -C "$INSTALL_DIR" pull --ff-only || warn "git pull 失败，继续用现有代码"
   else
     mkdir -p "$(dirname "$INSTALL_DIR")"
     git clone --depth 1 "$REPO_URL" "$INSTALL_DIR"
@@ -88,39 +83,62 @@ ECOSYSTEM="$SCRIPT_DIR/ecosystem.config.cjs"
 ENV_FILE="$WEB_DIR/.env"
 [ -f "$ECOSYSTEM" ] || die "缺少 $ECOSYSTEM"
 
-# ── 1. 环境检查（缺 Node 时按需自动安装）────────────────────
-if ! command -v node >/dev/null 2>&1; then
-  if [ "${INSTALL_NODE:-1}" = "1" ] && command -v apt-get >/dev/null 2>&1; then
-    log "未找到 Node.js，尝试用系统包管理器安装（Debian/Ubuntu）…"
+# ── 1. 系统依赖（缺什么装什么）───────────────────────────────
+if have apt-get; then
+  MISSING=""
+  for c in git curl openssl ca-certificates; do have "$c" || MISSING="$MISSING $c"; done
+  # ca-certificates 是包名而非命令，单独判一次
+  dpkg -s ca-certificates >/dev/null 2>&1 || MISSING="$MISSING ca-certificates"
+  if [ -n "$MISSING" ]; then
+    log "安装系统依赖：$MISSING"
+    apt-get update -y >/dev/null 2>&1 || true
+    apt-get install -y $MISSING >/dev/null 2>&1 || apt-get install -y $MISSING
+  fi
+fi
+
+# ── 2. 小内存机器自动加 swap（构建更稳）──────────────────────
+if [ "${SKIP_SWAP:-0}" != "1" ] && is_root; then
+  MEM_MB="$(awk '/MemTotal/{print int($2/1024)}' /proc/meminfo 2>/dev/null || echo 99999)"
+  SWAP_MB="$(awk '/SwapTotal/{print int($2/1024)}' /proc/meminfo 2>/dev/null || echo 99999)"
+  if [ "$MEM_MB" -lt 3000 ] && [ "$SWAP_MB" -lt 512 ] && [ ! -f /swapfile ]; then
+    log "物理内存 ${MEM_MB}MB 偏小，创建 2G swap…"
+    fallocate -l 2G /swapfile 2>/dev/null || dd if=/dev/zero of=/swapfile bs=1M count=2048 status=none
+    chmod 600 /swapfile
+    mkswap /swapfile >/dev/null
+    swapon /swapfile
+    grep -q '^/swapfile' /etc/fstab || echo '/swapfile none swap sw 0 0' >> /etc/fstab
+    ok "swap 已启用"
+  fi
+fi
+
+# ── 3. Node ≥ 20（缺则自动安装）──────────────────────────────
+if ! have node; then
+  if [ "${INSTALL_NODE:-1}" = "1" ] && have apt-get; then
+    log "未找到 Node.js，用系统包管理器安装…"
     apt-get update -y >/dev/null 2>&1 || true
     apt-get install -y nodejs npm >/dev/null 2>&1 || apt-get install -y nodejs || true
   fi
 fi
-
-# 系统包版本过低 / 不可用时，退回 NodeSource。
-NODE_MAJOR="$(command -v node >/dev/null 2>&1 && node -p 'process.versions.node.split(".")[0]' || echo 0)"
-if [ "$NODE_MAJOR" -lt 20 ] && [ "${INSTALL_NODE:-1}" = "1" ] && command -v apt-get >/dev/null 2>&1; then
+NODE_MAJOR="$(have node && node -p 'process.versions.node.split(".")[0]' || echo 0)"
+if [ "$NODE_MAJOR" -lt 20 ] && [ "${INSTALL_NODE:-1}" = "1" ] && have apt-get; then
   log "系统 Node 不可用或低于 20，改用 NodeSource 安装 Node 22…"
-  command -v curl >/dev/null 2>&1 || { apt-get update -y >/dev/null 2>&1 || true; apt-get install -y curl ca-certificates; }
+  have curl || { apt-get update -y >/dev/null 2>&1 || true; apt-get install -y curl ca-certificates; }
   curl -fsSL https://deb.nodesource.com/setup_22.x | bash -
   apt-get install -y nodejs
 fi
-
-command -v node >/dev/null 2>&1 || die "未找到 node，请先安装 Node.js ≥ 20"
+have node || die "未找到 node，请先安装 Node.js ≥ 20"
 NODE_MAJOR="$(node -p 'process.versions.node.split(".")[0]')"
 [ "$NODE_MAJOR" -ge 20 ] || die "Node.js 版本过低（当前 $(node -v)），需要 ≥ 20"
 
-pnpm_ok() { command -v pnpm >/dev/null 2>&1 && pnpm -v >/dev/null 2>&1; }
-
+# ── 4. pnpm（缺则自动安装）───────────────────────────────────
+pnpm_ok() { have pnpm && pnpm -v >/dev/null 2>&1; }
 if ! pnpm_ok; then
   log "pnpm 不可用，尝试启用 corepack…"
-  if command -v corepack >/dev/null 2>&1; then
+  if have corepack; then
     corepack enable >/dev/null 2>&1 || true
     corepack prepare pnpm@11.22.0 --activate >/dev/null 2>&1 || true
   fi
 fi
-
-# Debian/Ubuntu 自带的 corepack 唨有时会损坏（在即可，但运行报错），此时改用 npm 全局安装。
 if ! pnpm_ok; then
   log "corepack 不可用，改用 npm 全局安装 pnpm…"
   npm install -g pnpm
@@ -128,15 +146,16 @@ if ! pnpm_ok; then
 fi
 pnpm_ok || die "pnpm 不可用，请手动安装：npm i -g pnpm"
 
-if ! command -v pm2 >/dev/null 2>&1; then
+# ── 5. pm2（缺则自动安装）────────────────────────────────────
+if ! have pm2; then
   log "未找到 pm2，正在全局安装…"
   npm install -g pm2
 fi
-command -v pm2 >/dev/null 2>&1 || die "pm2 不可用，请手动安装：npm i -g pm2"
+have pm2 || die "pm2 不可用，请手动安装：npm i -g pm2"
 
 ok "Node $(node -v) · pnpm $(pnpm -v) · pm2 $(pm2 -v)"
 
-# ── 2. 环境变量 apps/web/.env ────────────────────────────────
+# ── 6. 环境变量 apps/web/.env ────────────────────────────────
 [ -f "$WEB_DIR/.env.example" ] || die "缺少 $WEB_DIR/.env.example"
 if [ ! -f "$ENV_FILE" ]; then
   cp "$WEB_DIR/.env.example" "$ENV_FILE"
@@ -152,23 +171,17 @@ fi
 GENERATED_PW=""
 NEED_PW=0
 if [ -n "${PANEL_PASSWORD:-}" ]; then
-  PW="$PANEL_PASSWORD"
-  NEED_PW=1
+  PW="$PANEL_PASSWORD"; NEED_PW=1
 elif ! grep -q '^PANEL_PASSWORD=' "$ENV_FILE" 2>/dev/null \
   || grep -q '^PANEL_PASSWORD=change-me-please' "$ENV_FILE" 2>/dev/null; then
   if [ -t 0 ]; then
     printf '\033[1;34m▸\033[0m 设置面板登录密码（留空则自动生成）：'
     read -r PW || true
   fi
-  PW="${PW:-}"
-  NEED_PW=1
+  PW="${PW:-}"; NEED_PW=1
 fi
-
 if [ "$NEED_PW" = "1" ]; then
-  if [ -z "$PW" ]; then
-    PW="$(gen_password)"
-    GENERATED_PW="$PW"
-  fi
+  if [ -z "$PW" ]; then PW="$(gen_password)"; GENERATED_PW="$PW"; fi
   case "$PW" in
     *[!A-Za-z0-9@%+=:,./_-]*) die "密码含不安全字符（仅支持字母数字与 @%+=:,./_-）" ;;
   esac
@@ -176,7 +189,7 @@ if [ "$NEED_PW" = "1" ]; then
   ok "已写入 PANEL_PASSWORD"
 fi
 
-# ── 3. VPS 凭据 apps/web/config/vps.yaml ─────────────────────
+# ── 7. VPS 凭据 apps/web/config/vps.yaml ─────────────────────
 VPS_CFG="$WEB_DIR/config/vps.yaml"
 if [ ! -f "$VPS_CFG" ]; then
   cp "$WEB_DIR/config/vps.yaml.example" "$VPS_CFG"
@@ -184,7 +197,40 @@ if [ ! -f "$VPS_CFG" ]; then
   warn "填好后执行：pm2 restart $APP_NAME --update-env"
 fi
 
-# ── 4. 安装依赖 + 构建 ───────────────────────────────────────
+# ── 8. 域名探测（决定是否上 Caddy / 绑 127.0.0.1）───────────
+detect_domain() {
+  if [ -n "${DOMAIN:-}" ]; then printf '%s' "$DOMAIN"; return 0; fi
+  [ "${NO_CADDY:-0}" = "1" ] && return 1
+  local fqdn
+  fqdn="$(hostname -f 2>/dev/null || true)"
+  case "$fqdn" in ""|localhost|localhost.localdomain) return 1;; esac
+  case "$fqdn" in *.*) ;; *) return 1;; esac
+  local locals pub addr
+  locals=" $(hostname -I 2>/dev/null || true) "
+  pub="$(curl -s --max-time 8 https://ifconfig.me 2>/dev/null || true)"
+  locals="$locals $pub "
+  while read -r addr; do
+    [ -z "$addr" ] && continue
+    case "$locals" in *" $addr "*) printf '%s' "$fqdn"; return 0;; esac
+  done <<EOF
+$(getent ahosts "$fqdn" 2>/dev/null | awk '{print $1}' | sort -u)
+EOF
+  return 1
+}
+
+DETECTED_DOMAIN="$(detect_domain || true)"
+if [ -n "$DETECTED_DOMAIN" ]; then
+  ok "探测到可用域名：$DETECTED_DOMAIN（将启用 Caddy 自动 HTTPS）"
+else
+  warn "未探测到指向本机的域名（可设 DOMAIN=... 或用 NO_CADDY=1 跳过）"
+fi
+
+if [ -n "$REQUESTED_HOST" ]; then HOST="$REQUESTED_HOST"
+elif [ -n "$DETECTED_DOMAIN" ]; then HOST="127.0.0.1"
+else HOST="0.0.0.0"; fi
+export APP_NAME PORT HOST
+
+# ── 9. 安装依赖 + 构建 ───────────────────────────────────────
 log "安装依赖（pnpm install）…"
 ( cd "$WEB_DIR" && pnpm install )
 
@@ -193,42 +239,50 @@ log "构建（next build）…"
 
 mkdir -p "$ROOT_DIR/logs"
 
-# ── 5. pm2 启动 / 重启 ───────────────────────────────────────
+# ── 10. pm2 启动 / 重启 + 开机自启（root 下自动配置）─────────
 if pm2 describe "$APP_NAME" >/dev/null 2>&1; then
-  log "重启已有进程 $APP_NAME…"
+  log "重启已有进程 $APP_NAME（HOST=$HOST）…"
   pm2 restart "$ECOSYSTEM" --update-env >/dev/null
 else
-  log "启动进程 $APP_NAME…"
+  log "启动进程 $APP_NAME（HOST=$HOST）…"
   pm2 start "$ECOSYSTEM" >/dev/null
 fi
 pm2 save >/dev/null
 
-# ── 6. 可选：Caddy 反向代理（设置 DOMAIN 时，443 → 127.0.0.1:PORT）───
-if [ -n "${DOMAIN:-}" ]; then
-  log "配置 Caddy：https://$DOMAIN → 127.0.0.1:$PORT"
-  DOMAIN="$DOMAIN" PORT="$PORT" EMAIL="${EMAIL:-}" bash "$SCRIPT_DIR/setup-caddy.sh"
-fi
-
-# ── 7. 开机自启 ──────────────────────────────────────────────
-STARTUP_CMD="$(pm2 startup 2>&1 | grep -E '^sudo env ' || true)"
-if [ -n "$STARTUP_CMD" ]; then
-  warn "配置开机自启：请以 root 执行下面这条命令（脚本不代为 sudo）"
-  printf '\n    %s\n\n' "$STARTUP_CMD"
+if is_root && have systemctl; then
+  pm2 startup systemd -u root --hp /root >/dev/null 2>&1 || true
+  systemctl is-enabled pm2-root >/dev/null 2>&1 && ok "pm2 开机自启已配置"
 else
-  ok "pm2 开机自启已配置"
+  STARTUP_CMD="$(pm2 startup 2>&1 | grep -E '^sudo env ' || true)"
+  [ -n "$STARTUP_CMD" ] && { warn "请以 root 执行一次以配置开机自启："; printf '\n    %s\n\n' "$STARTUP_CMD"; }
 fi
 
-# ── 8. 结果 ──────────────────────────────────────────────────
+# ── 11. Caddy 反向代理（443 → 127.0.0.1:PORT，自动 HTTPS）────
+SCHEME="http"
+ACCESS_HOST="<服务器IP>"
+if [ -n "$DETECTED_DOMAIN" ]; then
+  log "配置 Caddy：https://$DETECTED_DOMAIN → 127.0.0.1:$PORT"
+  if DOMAIN="$DETECTED_DOMAIN" PORT="$PORT" EMAIL="${EMAIL:-}" bash "$SCRIPT_DIR/setup-caddy.sh"; then
+    SCHEME="https"; ACCESS_HOST="$DETECTED_DOMAIN"
+  else
+    warn "Caddy 配置失败；面板仍可在 http://<服务器IP>:$PORT 访问"
+    HOST="0.0.0.0"; export HOST
+    pm2 restart "$ECOSYSTEM" --update-env >/dev/null || true
+    pm2 save >/dev/null || true
+  fi
+fi
+
+# ── 12. 结果 ─────────────────────────────────────────────────
 sleep 2
 pm2 describe "$APP_NAME" 2>/dev/null | grep -E 'status|restarts|uptime' || true
 printf '\n'
-if [ -n "${DOMAIN:-}" ]; then
-  ok "部署完成 → https://$DOMAIN   （http://<服务器IP>:$PORT 仍可直连）"
+if [ "$SCHEME" = "https" ]; then
+  ok "部署完成 → https://$ACCESS_HOST/login"
+  printf '   （面板仅监听 127.0.0.1:%s，公网走 Caddy 443）\n' "$PORT"
 else
-  ok "部署完成 → http://<服务器IP>:$PORT"
+  ok "部署完成 → http://$ACCESS_HOST:$PORT/login"
 fi
 if [ -n "$GENERATED_PW" ]; then
-  warn "已为你生成面板密码：$GENERATED_PW   （请自行保存，可改 apps/web/.env 后重启）"
+  warn "面板登录密码：$GENERATED_PW   （保存好；改 apps/web/.env 后 pm2 restart $APP_NAME）"
 fi
-printf '常用命令：\n  pm2 logs %s        # 查看日志\n  pm2 restart %s     # 重启\n  pm2 stop %s        # 停止\n\n' \
-  "$APP_NAME" "$APP_NAME" "$APP_NAME"
+printf '常用命令：\n  pm2 logs %s        # 面板日志\n  pm2 restart %s     # 重启面板\n  journalctl -u caddy -f   # Caddy / 证书日志\n\n' "$APP_NAME" "$APP_NAME"

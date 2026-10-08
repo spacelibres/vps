@@ -42,56 +42,55 @@ vps:
 
 该文件已被 `.gitignore` 忽略，**不会进版本库**；`api_key` 只在服务端加载，绝不下发到浏览器。
 
-## 部署（VPS + pm2 进程守护）
+## 部署（VPS + pm2 + Caddy，全自动）
 
-生产部署使用 `pm2` 常驻 `next start`。部署产物在 [`deploy/`](./deploy)：
-`install.sh`（一键安装/更新）与 `ecosystem.config.cjs`（pm2 配置）。
+部署产物在 [`deploy/`](./deploy)：`install.sh`（一键全自动安装/更新）、`setup-caddy.sh`（443 自动 HTTPS）、
+`ecosystem.config.cjs`（pm2 配置）、`Caddyfile.template`。
 
-**方式 A · 一行命令（服务器上自动克隆到 `/opt/vps-panel`）**：
+**一行命令（推荐，零人工干预）**：
 
 ```bash
-PANEL_PASSWORD='你的强密码' \
+curl -fsSL https://raw.githubusercontent.com/spacelibres/vps/main/deploy/install.sh | bash
+```
+
+它会**自动完成**：克隆到 `/opt/vps-panel` → 装系统依赖（git/curl/openssl）→ 小内存机器自动加 swap →
+装 Node ≥ 20（缺则装）→ 启用 pnpm → 装 pm2 → 装 Caddy → 生成 `apps/web/.env`（随机
+`SESSION_SECRET`；未提供密码则**自动生成并打印**）→ `pnpm install` → `next build` →
+`pm2 start` + `pm2 save` + **开机自启** → 若 `hostname -f` 解析到本机则**自动配好 443 自动 HTTPS**
+（并把面板改为仅监听 `127.0.0.1`）。
+
+**可选环境变量**：
+
+| 变量 | 默认 | 说明 |
+|---|---|---|
+| `PANEL_PASSWORD` | 自动生成 | 面板登录密码 |
+| `DOMAIN` | 自动探测 | 对外域名（探测不到则不启用 HTTPS）|
+| `EMAIL` | 空 | ACME 账号邮箱 |
+| `PORT` | `3000` | 面板端口 |
+| `HOST` | 有域名时 `127.0.0.1` | 面板监听地址 |
+| `APP_NAME` | `vps-panel` | pm2 进程名 |
+| `INSTALL_DIR` | `/opt/vps-panel` | 克隆目录 |
+| `NO_CADDY` / `SKIP_SWAP` | `0` | 跳过 Caddy / swap |
+
+```bash
+# 指定密码 + 域名
+PANEL_PASSWORD='强密码' DOMAIN=panel.example.com \
   bash -c "$(curl -fsSL https://raw.githubusercontent.com/spacelibres/vps/main/deploy/install.sh)"
-```
 
-**方式 B · 先克隆再安装**：
+# 只在已克隆的仓库里重新部署 / 更新
+cd /opt/vps-panel && bash deploy/install.sh
 
-```bash
-git clone https://github.com/spacelibres/vps.git /opt/vps-panel
-cd /opt/vps-panel
-PANEL_PASSWORD='你的强密码' bash deploy/install.sh
-```
-
-脚本会：检查/安装 Node ≥ 20（Debian/Ubuntu 下自动装 Node 22）、启用 pnpm、安装 pm2、
-生成 `apps/web/.env`（随机 `SESSION_SECRET`）、装依赖、`next build`、`pm2 start` 并 `pm2 save`。
-
-**可调环境变量**：`PORT`（默认 `3000`）、`HOST`（默认 `0.0.0.0`）、`APP_NAME`（默认 `vps-panel`）、
-`INSTALL_DIR`（默认 `/opt/vps-panel`）。
-
-```bash
-PORT=8080 bash deploy/install.sh          # 换端口
-pm2 logs vps-panel                        # 看日志
-pm2 restart vps-panel --update-env        # 重启
-```
-
-**反向代理（可选：Caddy 自动 HTTPS，443 → 3000）**
-
-```bash
-# 方式 1：随安装一起（设置 DOMAIN 即自动配好 Caddy）
-DOMAIN=panel.example.com PANEL_PASSWORD='你的强密码' bash deploy/install.sh
-
-# 方式 2：单独配置（可重复执行）
+# 单独配 Caddy（可重复执行；换域名也用它）
 DOMAIN=panel.example.com bash deploy/setup-caddy.sh
+
+pm2 logs vps-panel                       # 面板日志
+journalctl -u caddy -f                   # Caddy / 证书日志
 ```
 
-Caddy 会占用 **80/443**、自动申请 Let's Encrypt 证书，并把 `https://<域名>` 反代到 `127.0.0.1:3000`，
-同时带上 `X-Forwarded-Proto`（应用据此自动给 cookie 加 `Secure`），且关闭响应缓冲以保 SSE 实时性。
-前置条件：域名 `A`/`AAAA` 已指向本机、80/443 空闲。
+Caddy 占用 **80/443**，自动申请/续期 Let's Encrypt 证书，把 `https://<域名>` 反代到
+`127.0.0.1:3000`，并带上 `X-Forwarded-Proto`（应用据此给 cookie 自动加 `Secure`）。
 
-> 上线后建议把面板进程改为只监听本机：`HOST=127.0.0.1` 重新安装或 `pm2 restart vps-panel --update-env`。
-
-> 首次部署后记得填 `apps/web/config/vps.yaml`（填入真实 veid/api_key/alias）再重启。
-> 开机自启：脚本末尾会打印一条 `sudo env ...` 命令，以 root 执行一次即可。
+> 首次部署后请填 `apps/web/config/vps.yaml`（真实 veid/api_key/alias）再 `pm2 restart vps-panel --update-env`。
 
 ## 目录结构
 
