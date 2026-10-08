@@ -8,7 +8,7 @@
  * | pool | GET | false | `{}` | `PoolPayload`（本插件 types） |
  * | snapshot | POST | false | `{}` | `{ events, rowsMerged, revision }` |
  * | fetch | POST | false | `{ url?, ip?, browser?, noPin?, timeoutMs? }` | `FetchActionResult`（本插件 types） |
- * | fetchBatch | POST | false | `{ url?, ips?, family?, limit?, concurrency?, browser?, timeoutMs? }` | `FetchBatchStatus`（本插件 types） |
+ * | fetchBatch | POST | false | `{ url?, ips?, family?, limit?, concurrency?(0=全速), browser?, timeoutMs? }` | `FetchBatchStatus`（本插件 types） |
  * | batchStatus | GET | false | `{}` | `FetchBatchStatus`（本插件 types） |
  * | stream | GET | false | `{}` | `Response`（SSE，`raw: true`） |
  *
@@ -306,13 +306,15 @@ const fetchBatchSchema = z.object({
   ips: z.array(z.string()).optional(),
   family: z.enum(["all", "ipv4", "ipv6"]).default("all"),
   limit: z.number().int().positive().max(5000).optional(),
-  concurrency: z.number().int().min(1).max(64).default(16),
+  /** `0`（默认）= 不限并发、全速；> 0 = 显式限并发。 */
+  concurrency: z.number().int().min(0).max(4096).default(0),
   browser: z.string().optional(),
   timeoutMs: z.number().int().positive().max(120_000).optional(),
 });
 
 /**
  * 批量抓取：对全池（或指定 IP / 地址族 / 限量）逐 IP 钉住后抓取一次。
+ * **默认全速**（`concurrency: 0` 不限并发），先把吞吐跑满，之后再谈调优。
  * **后台运行**，立即返回作业进度；逐条结果写入 Store，经 SSE 实时推送弹道。
  */
 export const fetchBatchAction = defineAction({

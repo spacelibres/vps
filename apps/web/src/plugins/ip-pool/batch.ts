@@ -19,14 +19,18 @@ export interface FetchBatchOptions {
   timeoutMs?: number;
 }
 
-const MAX_CONCURRENCY = 64;
-const DEFAULT_CONCURRENCY = 16;
+const MAX_CONCURRENCY = 4096;
+/** 默认**全速**（不限并发）；需要限流时显式传 `concurrency > 0`。 */
+const DEFAULT_CONCURRENCY = 0;
 
 let job: FetchBatchStatus = { ...EMPTY_BATCH_STATUS };
 
-/** 当前（或最近一次）批量抓取作业的进度快照。 */
+/** 当前（或最近一次）批量抓取作业的进度快照（附加实时吞吐指标）。 */
 export function batchStatus(): FetchBatchStatus {
-  return job;
+  const now = job.running ? Date.now() : (job.finishedAt ?? Date.now());
+  const elapsedMs = job.startedAt ? Math.max(0, now - job.startedAt) : 0;
+  const ratePerSec = elapsedMs > 0 ? Math.round((job.done / elapsedMs) * 1000 * 10) / 10 : 0;
+  return { ...job, elapsedMs, ratePerSec };
 }
 
 export function isBatchRunning(): boolean {
@@ -56,10 +60,12 @@ export function startBatch(options: FetchBatchOptions): FetchBatchStatus {
 
   const cfg = fetchConfig();
   const targets = resolveBatchTargets(options);
-  const concurrency = Math.max(
-    1,
-    Math.min(Math.floor(options.concurrency ?? DEFAULT_CONCURRENCY) || DEFAULT_CONCURRENCY, MAX_CONCURRENCY),
-  );
+  // `concurrency <= 0`（默认）→ 全速：不限并发，一次性铺开全部目标。
+  const requested = Math.floor(options.concurrency ?? DEFAULT_CONCURRENCY) || DEFAULT_CONCURRENCY;
+  const concurrency =
+    requested <= 0
+      ? targets.length
+      : Math.min(requested, MAX_CONCURRENCY, targets.length);
   const url = options.url ?? cfg.targetUrl;
   const browser = options.browser ?? cfg.browser;
   const timeoutMs = options.timeoutMs ?? cfg.timeoutMs;

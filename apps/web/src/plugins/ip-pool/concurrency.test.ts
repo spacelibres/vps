@@ -44,6 +44,20 @@ describe("mapPool", () => {
     expect(peak).toBe(2);
   });
 
+  it("concurrency <= 0 表示全速（一次性全部铺开）", async () => {
+    let peak = 0;
+    let active = 0;
+    const items = Array.from({ length: 12 }, (_, i) => i);
+    await mapPool(items, 0, async () => {
+      active += 1;
+      peak = Math.max(peak, active);
+      await new Promise((r) => setTimeout(r, 5));
+      active -= 1;
+      return 0;
+    });
+    expect(peak).toBe(12);
+  });
+
   it("单项失败会向上抛出", async () => {
     await expect(
       mapPool([1, 2, 3], 2, async (n) => {

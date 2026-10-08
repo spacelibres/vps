@@ -473,7 +473,7 @@ export function IpPoolView(_props: PluginViewProps) {
           actions={
             <div className="flex gap-2">
               <Button variant="ghost" onClick={() => void runBatch()} disabled={batch?.running === true}>
-                {batch?.running ? "抓取中…" : "全池抓取"}
+                {batch?.running ? "抓取中…" : "全池抓取（全速）"}
               </Button>
               <Button onClick={() => void runFetch()} disabled={fetching}>
                 {fetching ? <Spinner label="抓取中" /> : "抓取一次"}
@@ -493,6 +493,9 @@ export function IpPoolView(_props: PluginViewProps) {
                 <span>
                   {batch.done} / {batch.total}
                 </span>
+                {typeof batch.ratePerSec === "number" && batch.ratePerSec > 0 && (
+                  <span className="text-neutral-500">{batch.ratePerSec} 个/秒</span>
+                )}
                 <span className="ml-auto text-neutral-500">
                   成功 {batch.success} · HTTP {batch.httpError} · 传输 {batch.transportError}
                 </span>

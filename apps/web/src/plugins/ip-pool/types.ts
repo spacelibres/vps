@@ -249,6 +249,10 @@ export interface FetchBatchStatus {
   transportError: number;
   /** 实际并发上限。 */
   concurrency: number;
+  /** 已运行时长（毫秒）。 */
+  elapsedMs?: number;
+  /** 完成速率（个 / 秒），用于后续调优。 */
+  ratePerSec?: number;
   /** 作业起始 / 结束时刻（UNIX ms）；未开始为 0。 */
   startedAt: number;
   finishedAt?: number;
@@ -265,6 +269,8 @@ export const EMPTY_BATCH_STATUS: FetchBatchStatus = {
   httpError: 0,
   transportError: 0,
   concurrency: 0,
+  elapsedMs: 0,
+  ratePerSec: 0,
   startedAt: 0,
 };
 
