@@ -205,15 +205,26 @@ detect_domain() {
   fqdn="$(hostname -f 2>/dev/null || true)"
   case "$fqdn" in ""|localhost|localhost.localdomain) return 1;; esac
   case "$fqdn" in *.*) ;; *) return 1;; esac
-  local locals pub addr
+
+  local locals pub addr addrs
   locals=" $(hostname -I 2>/dev/null || true) "
   pub="$(curl -s --max-time 8 https://ifconfig.me 2>/dev/null || true)"
   locals="$locals $pub "
+
+  # 用 `getent -s dns` 只查 DNS（绕开 /etc/hosts 里 127.0.0.1 的干扰），
+  # 再排除回环地址，最后与本机地址比对。
+  addrs="$(
+    {
+      getent -s dns ahostsv4 "$fqdn" 2>/dev/null | awk '{print $1}'
+      getent -s dns ahostsv6 "$fqdn" 2>/dev/null | awk '{print $1}'
+    } | grep -vE '^(127\.|::1$|$)' | sort -u || true
+  )"
+
   while read -r addr; do
     [ -z "$addr" ] && continue
     case "$locals" in *" $addr "*) printf '%s' "$fqdn"; return 0;; esac
   done <<EOF
-$(getent ahosts "$fqdn" 2>/dev/null | awk '{print $1}' | sort -u)
+$addrs
 EOF
   return 1
 }
