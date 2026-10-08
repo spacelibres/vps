@@ -1,7 +1,6 @@
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { parse as parseYaml } from "yaml";
 import { describe, expect, it } from "vitest";
 import { IpPoolStore } from "./store";
 
@@ -180,9 +179,9 @@ describe("IpPoolStore.ingest", () => {
       });
       store.flush();
 
-      const file = path.join(dataDir, "kh.google.com.yaml");
+      const file = path.join(dataDir, "kh.google.com.json");
       expect(existsSync(file)).toBe(true);
-      const doc = parseYaml(readFileSync(file, "utf8")) as {
+      const doc = JSON.parse(readFileSync(file, "utf8")) as {
         ips: Record<string, { requests: number }>;
       };
       expect(doc.ips["1.1.1.2"]!.requests).toBe(1);
@@ -251,12 +250,52 @@ describe("IpPoolStore.reset", () => {
       expect(snap.summary.totalAttempts).toBe(0);
 
       // 落盘后重新加载为空。
-      const file = path.join(dataDir, "kh.google.com.yaml");
+      const file = path.join(dataDir, "kh.google.com.json");
       expect(existsSync(file)).toBe(true);
-      const doc = parseYaml(readFileSync(file, "utf8")) as { ips: Record<string, unknown> };
+      const doc = JSON.parse(readFileSync(file, "utf8")) as { ips: Record<string, unknown> };
       expect(Object.keys(doc.ips)).toHaveLength(0);
     } finally {
       dispose();
+    }
+  });
+});
+
+describe("IpPoolStore 落盘格式", () => {
+  it("兼容读取旧版 YAML 落盘文件", () => {
+    const root = mkdtempSync(path.join(tmpdir(), "ip-pool-legacy-"));
+    const poolFile = path.join(root, "pool.yaml");
+    const dataDir = path.join(root, "data");
+    writeFileSync(poolFile, POOL_YAML, "utf8");
+    mkdirSync(dataDir, { recursive: true });
+    writeFileSync(
+      path.join(dataDir, "kh.google.com.yaml"),
+      [
+        "hostname: kh.google.com",
+        "updatedAt: 2026-01-01T00:00:00.000Z",
+        "ips:",
+        "  1.1.1.1:",
+        "    requests: 7",
+        "    success: 7",
+        "    failed: 0",
+        "    totalBytes: 13",
+        "    totalDurationMs: 100",
+        "",
+      ].join("\n"),
+      "utf8",
+    );
+    try {
+      const store = new IpPoolStore({
+        hostname: "kh.google.com",
+        poolFile,
+        dataDir,
+        flushIntervalMs: 0,
+        debounceMs: 0,
+      });
+      const row = store.snapshot().rows.find((r) => r.ip === "1.1.1.1");
+      expect(row?.requests).toBe(7);
+      store.dispose();
+    } finally {
+      rmSync(root, { recursive: true, force: true });
     }
   });
 });

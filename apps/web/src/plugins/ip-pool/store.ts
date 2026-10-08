@@ -1,6 +1,6 @@
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import path from "node:path";
-import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
+import { parse as parseYaml } from "yaml";
 import { buildFlightPath } from "./flight";
 import { originFromEnv } from "./origin";
 import {
@@ -68,15 +68,33 @@ function finalizeBucket(bucket: FetchCounterBucket): void {
 }
 
 /**
+ * 解析落盘统计文档：**优先 JSON**，回退 YAML（旧版文件 / GeoClaw 风格）。
+ * JSON 是合法 YAML，反之不然；先试 `JSON.parse` 可避开 `yaml` 库的慢解析。
+ */
+function parseStatsDoc(text: string): PersistedFileShape | null {
+  if (text.trim() === "") return null;
+  if (text.trimStart().startsWith("{")) {
+    try {
+      return JSON.parse(text) as PersistedFileShape;
+    } catch {
+      // 以 `{` 开头的 YAML 流式映射 → 落到下面用 YAML 解析
+    }
+  }
+  return parseYaml(text) as PersistedFileShape | null;
+}
+
+/**
  * IP 池 + 请求统计的内存状态，**必须落盘**。
  *
- * 落盘位置：`{dataDir}/{hostname}.yaml`，格式
- * `{ hostname, updatedAt, ips: Record<ip, IpFetchStatRow> }`。
+ * 落盘位置：`{dataDir}/{hostname}.json`，格式
+ * `{ hostname, updatedAt, ips: Record<ip, IpFetchStatRow> }`（JSON）。
  */
 export class IpPoolStore {
   readonly hostname: string;
   private readonly poolFile: string;
   private readonly dataFile: string;
+  /** 旧版 YAML 落盘文件（仅兼容读取，不再写入）。 */
+  private readonly legacyDataFile: string;
   private readonly dataDir: string;
 
   private readonly maxRecentAttempts: number;
@@ -115,7 +133,8 @@ export class IpPoolStore {
     this.hostname = options.hostname;
     this.poolFile = options.poolFile;
     this.dataDir = options.dataDir;
-    this.dataFile = path.join(options.dataDir, `${options.hostname}.yaml`);
+    this.dataFile = path.join(options.dataDir, `${options.hostname}.json`);
+    this.legacyDataFile = path.join(options.dataDir, `${options.hostname}.yaml`);
     this.origin = options.origin ?? null;
     this.maxRecentAttempts = options.maxRecentAttempts ?? 400;
     this.maxRecentRequests = options.maxRecentRequests ?? 200;
@@ -147,9 +166,15 @@ export class IpPoolStore {
   }
 
   private loadStats(): void {
-    if (!existsSync(this.dataFile)) return;
+    // 优先 JSON（新格式）；回退旧版 YAML。
+    const file = existsSync(this.dataFile)
+      ? this.dataFile
+      : existsSync(this.legacyDataFile)
+        ? this.legacyDataFile
+        : null;
+    if (!file) return;
     try {
-      const doc = parseYaml(readFileSync(this.dataFile, "utf8")) as PersistedFileShape | null;
+      const doc = parseStatsDoc(readFileSync(file, "utf8"));
       for (const [ip, row] of Object.entries(doc?.ips ?? {})) {
         this.byIp.set(ip, { ...row, totalBytes: row.totalBytes ?? 0 });
       }
@@ -157,7 +182,7 @@ export class IpPoolStore {
       if (!this.origin && doc?.origin) this.origin = doc.origin;
       this.rebuildBuckets();
     } catch (err) {
-      console.error(`[ip-pool] 读取统计文件失败：${this.dataFile}`, err);
+      console.error(`[ip-pool] 读取统计文件失败：${file}`, err);
     }
   }
 
@@ -454,7 +479,9 @@ export class IpPoolStore {
         ips: Object.fromEntries(this.byIp),
       };
       const tmp = `${this.dataFile}.tmp`;
-      writeFileSync(tmp, stringifyYaml(payload), "utf8");
+      // 用 JSON 落盘：`yaml` 库序列化 3500 行要约 850ms，会卡住事件循环；
+      // JSON 仅 ~14ms，且 JSON 是合法 YAML，兼容性不受影响。
+      writeFileSync(tmp, JSON.stringify(payload), "utf8");
       renameSync(tmp, this.dataFile);
       this.dirty = false;
     } catch (err) {

@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { readFileSync, statSync } from "node:fs";
 import { parse as parseYaml } from "yaml";
 import { parseLocString } from "./geo";
 import type { HostPinRecord, PoolCityNode, PoolCountryNode, PoolIpNode } from "./types";
@@ -56,9 +56,17 @@ export function parseKhGoogleYaml(text: string): {
   return { ipv4, ipv6, all: [...ipv4, ...ipv6] };
 }
 
-/** 从文件加载全部 IP 记录。 */
+/** 按路径 + mtime 缓存解析结果：`yaml` 库解析数千行要数秒，不能每次重解。 */
+const recordCache = new Map<string, { mtimeMs: number; records: HostPinRecord[] }>();
+
+/** 从文件加载全部 IP 记录（按 mtime 缓存；文件未变时直接返回）。 */
 export function loadPoolRecords(yamlPath: string): HostPinRecord[] {
-  return parseKhGoogleYaml(readFileSync(yamlPath, "utf8")).all;
+  const mtimeMs = statSync(yamlPath).mtimeMs;
+  const cached = recordCache.get(yamlPath);
+  if (cached && cached.mtimeMs === mtimeMs) return cached.records;
+  const records = parseKhGoogleYaml(readFileSync(yamlPath, "utf8")).all;
+  recordCache.set(yamlPath, { mtimeMs, records });
+  return records;
 }
 
 /**

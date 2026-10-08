@@ -153,9 +153,10 @@ type PoolAggregate = {
 - `aggregate: PoolAggregate[]`（§3.3，池文件加载时计算一次并缓存）
 
 **持久化（必须）**：统计**必须落盘**，不能纯内存。
-- 位置：`apps/web/data/ip-stats/<hostname>.yaml`（格式同 §4.2，已 gitignore）。
+- 位置：`apps/web/data/ip-stats/<hostname>.json`（JSON 格式；兼容读取旧 `.yaml`；已 gitignore）。
 - 策略：启动时**回填** → 每次记账后**去抖（~2s）**写盘，另加**定时兜底刷盘**（默认 15s，可配）。
 - 原子性：写「临时文件 + rename」，避免写一半掉电损坏。
+- **格式为 JSON**：`yaml` 库序列化 3500 行要 ~850ms、会卡事件循环；JSON 仅 ~14ms。
 
 ## 6. 航路合成（没有现成 `flightPaths` 时）
 
