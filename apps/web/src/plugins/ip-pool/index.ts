@@ -7,7 +7,7 @@
  * | stats | GET | false | `{}` | `StatsSnapshot`（本插件 types） |
  * | pool | GET | false | `{}` | `PoolPayload`（本插件 types） |
  * | snapshot | POST | false | `{}` | `{ events, rowsMerged, revision }` |
- * | dispatch | POST | false | `{ url?, count }` | `DispatchStatus`（本插件 types） |
+ * | dispatch | POST | false | `{ url?, count, concurrency? }` | `DispatchStatus`（本插件 types） |
  * | dispatchStatus | GET | false | `{}` | `DispatchStatus`（本插件 types） |
  * | resetStats | POST | false | `{}` | `ResetStatsResult`（本插件 types） |
  * | stream | GET | false | `{}` | `Response`（SSE，`raw: true`） |
@@ -201,6 +201,8 @@ const dispatchSchema = z.object({
   /** 目标 URL；缺省用配置的 `IP_POOL_TARGET_URL`。 */
   url: z.string().optional(),
   count: z.number().int().positive().max(1_000_000),
+  /** 在飞请求上限；`0` = 不设上限（会拖慢每个请求）。缺省用 `IP_POOL_DISPATCH_CONCURRENCY`（默认 256）。 */
+  concurrency: z.number().int().min(0).max(4096).optional(),
 });
 
 export const dispatchAction = defineAction({
@@ -212,7 +214,9 @@ export const dispatchAction = defineAction({
   input: dispatchSchema,
   run: (_ctx, input): Promise<DispatchStatus> => {
     if (isDispatchRunning()) return Promise.resolve(dispatchStatus());
-    return Promise.resolve(startDispatch({ url: input.url, count: input.count }));
+    return Promise.resolve(
+      startDispatch({ url: input.url, count: input.count, concurrency: input.concurrency }),
+    );
   },
 });
 

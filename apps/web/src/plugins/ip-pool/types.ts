@@ -234,6 +234,8 @@ export interface DispatchStatus {
   failed: number;
   /** 本次实际参与的热 IP 数。 */
   hot: number;
+  /** 在飞请求上限（worker 数）。 */
+  concurrency: number;
   startedAt: number;
   finishedAt?: number;
   elapsedMs?: number;
@@ -252,6 +254,7 @@ export const EMPTY_DISPATCH_STATUS: DispatchStatus = {
   success: 0,
   failed: 0,
   hot: 0,
+  concurrency: 0,
   startedAt: 0,
 };
 

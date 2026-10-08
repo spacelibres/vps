@@ -16,6 +16,8 @@ export interface IpPoolFetchConfig {
   coldTimeoutMs: number;
   /** 是否在面板打开时自动预热**整池**（`IP_POOL_AUTO_WARM=0` 可关闭）。 */
   autoWarm: boolean;
+  /** 派发时同时在飞的请求上限（`IP_POOL_DISPATCH_CONCURRENCY`，默认 256）。 */
+  dispatchConcurrency: number;
   /** 弹道起点（`IP_POOL_ORIGIN="lat,lng[,label]"`）。 */
   origin?: { lat: number; lng: number; label?: string };
   poolFile: string;
@@ -26,6 +28,8 @@ const DEFAULT_BROWSER = "chrome_136";
 const DEFAULT_TIMEOUT_MS = 20_000;
 const DEFAULT_CONNECT_TIMEOUT_MS = 4_000;
 const DEFAULT_COLD_TIMEOUT_MS = 6_000;
+/** 派发默认在飞上限：实测单机吞吐在 ~200-400 并发见顶，再高反而下降。 */
+const DEFAULT_DISPATCH_CONCURRENCY = 256;
 
 function parseOriginEnv(raw: string | undefined): IpPoolFetchConfig["origin"] {
   return parseOrigin(raw);
@@ -46,6 +50,7 @@ export function fetchConfig(): IpPoolFetchConfig {
     connectTimeoutMs: Number(process.env.IP_POOL_CONNECT_TIMEOUT_MS ?? DEFAULT_CONNECT_TIMEOUT_MS),
     coldTimeoutMs: Number(process.env.IP_POOL_COLD_TIMEOUT_MS ?? DEFAULT_COLD_TIMEOUT_MS),
     autoWarm: process.env.IP_POOL_AUTO_WARM !== "0",
+    dispatchConcurrency: Number(process.env.IP_POOL_DISPATCH_CONCURRENCY ?? DEFAULT_DISPATCH_CONCURRENCY),
     origin: parseOriginEnv(process.env.IP_POOL_ORIGIN),
     poolFile: resolvePoolFile(),
   };

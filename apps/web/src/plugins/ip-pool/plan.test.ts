@@ -1,29 +1,34 @@
 import { describe, expect, it } from "vitest";
-import { planDispatch } from "./plan";
+import { dispatchWorkerCount, hotIpFor } from "./plan";
 
-describe("planDispatch", () => {
-  it("均分且总数守恒（每个工人相差 ≤ 1）", () => {
-    expect(planDispatch(10, 3)).toEqual([4, 3, 3]);
-    expect(planDispatch(9, 3)).toEqual([3, 3, 3]);
-    for (const [count, workers] of [
-      [10000, 3458],
-      [3458, 3458],
-      [1, 5],
-      [5, 5],
-    ] as const) {
-      const plan = planDispatch(count, workers);
-      expect(plan).toHaveLength(workers);
-      expect(plan.reduce((s, n) => s + n, 0)).toBe(count);
-      expect(Math.max(...plan) - Math.min(...plan)).toBeLessThanOrEqual(1);
-    }
+describe("dispatchWorkerCount", () => {
+  it("有界并发：不超过 cap，也不超过可用热 IP / 请求数", () => {
+    expect(dispatchWorkerCount(10000, 3458, 256)).toBe(256);
+    expect(dispatchWorkerCount(10000, 3458, 4096)).toBe(3458);
+    expect(dispatchWorkerCount(10, 3458, 256)).toBe(10);
+    expect(dispatchWorkerCount(10000, 100, 256)).toBe(100);
   });
 
-  it("工人多于请求时，前 count 个各 1，其余 0", () => {
-    expect(planDispatch(2, 5)).toEqual([1, 1, 0, 0, 0]);
+  it("cap<=0 表示不设上限（min(count, hot)）", () => {
+    expect(dispatchWorkerCount(10000, 3458, 0)).toBe(3458);
+    expect(dispatchWorkerCount(10, 3458, 0)).toBe(10);
   });
 
-  it("无工人返回空数组；count<=0 返回全 0", () => {
-    expect(planDispatch(100, 0)).toEqual([]);
-    expect(planDispatch(0, 3)).toEqual([0, 0, 0]);
+  it("无请求或无热 IP 时为 0", () => {
+    expect(dispatchWorkerCount(0, 3458, 256)).toBe(0);
+    expect(dispatchWorkerCount(10000, 0, 256)).toBe(0);
+  });
+});
+
+describe("hotIpFor", () => {
+  it("轮询整表，每张都参与", () => {
+    expect(hotIpFor(0, 3)).toBe(0);
+    expect(hotIpFor(1, 3)).toBe(1);
+    expect(hotIpFor(3, 3)).toBe(0);
+    expect(hotIpFor(10, 3)).toBe(1);
+  });
+
+  it("空表返回 0", () => {
+    expect(hotIpFor(5, 0)).toBe(0);
   });
 });
