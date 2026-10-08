@@ -5,7 +5,15 @@
 ## 0. 技术栈（固定，不得偏离）
 
 - **TypeScript + Next.js 15（App Router）**。禁止 `.js` 源文件；禁止引入其它框架 / Router / 状态库 / UI 组件库。
-- 允许的依赖范围：React + Tailwind + 现有 `@/sdk` + `zod` + `yaml` + `jose` + `leaflet`。新增依赖必须在 `AGENTS.md` 里登记理由。
+- 允许的依赖范围：React + Tailwind + 现有 `@/sdk` + `zod` + `yaml` + `jose` + `leaflet`。新增依赖必须在本段登记理由。
+- **已登记依赖**：
+  - `react` / `tailwindcss`：UI。
+  - `zod`：唯一校验元数据来源。
+  - `yaml`：读取 IP 池文件与统计落盘。
+  - `jose`：会话 cookie 签名。
+  - `leaflet`：地图底图与图层。
+  - `node-wreq`：`ip-pool` 插件**真实抓取**所需——浏览器 **TLS/JA3/JA4 + HTTP2 指纹**与**钉 IP**
+    （Rust 原生绑定，带 `linux-x64-gnu` 预编译；直连不通时配合 `IP_POOL_PROXY` 代理）。
 - 包管理器 pnpm；Node ≥ 20。
 - 表单与校验的**唯一元数据来源是 zod schema**。
 

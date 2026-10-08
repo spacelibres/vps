@@ -441,7 +441,8 @@ function firstExisting(candidates: string[]): string {
   return candidates[candidates.length - 1]!;
 }
 
-function resolvePoolFile(): string {
+/** 解析池文件路径（依次尝试若干候选，可用 `IP_POOL_FILE` 覆盖）。 */
+export function resolvePoolFile(): string {
   if (process.env.IP_POOL_FILE) return process.env.IP_POOL_FILE;
   const cwd = process.cwd();
   return firstExisting([

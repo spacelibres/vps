@@ -217,6 +217,25 @@ export interface PoolPayload {
   pool: PoolCounts & { aggregate: PoolCountryNode[] };
 }
 
+/** `fetch` 动作的返回。 */
+export interface FetchActionResult {
+  requestId: string;
+  url: string;
+  outcome: "success" | "http_error" | "transport_error";
+  ok: boolean;
+  status?: number;
+  statusText?: string;
+  bytes: number;
+  durationMs: number;
+  waitMs?: number;
+  contentType?: string;
+  server?: string;
+  pinnedIp?: string;
+  error?: string;
+  /** 是否已计入统计（写入 Store）。 */
+  recorded: boolean;
+}
+
 /** SSE `snapshot` 事件的形状。 */
 export interface StreamSnapshot {
   hostname: string;

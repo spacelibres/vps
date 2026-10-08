@@ -7,6 +7,34 @@
 
 ## [未发布]
 
+## [0.0.3] - 2026-10-08
+
+### 新增
+
+- `ip-pool` **一期真实抓取**：新增 `fetch` 动作（POST，`needsVps:false`），用 `node-wreq`
+  带**浏览器 TLS/JA3/JA4 + HTTP2 指纹**抓取一次，默认钉住池内 IP（模拟浏览器经由 Google 前端 IP 出网）。
+  - `config.ts`：全部抓取参数来自环境变量（目标 URL / 指纹 profile / 代理 / 超时 / 弹道起点 / 池文件）。
+  - `host-pin.ts`：`HostPinPool` 轮询分配池内 IP，构造 `dns.hosts` 覆盖以绕过系统解析。
+  - `fetch.ts`：`fetchOnce`——指纹 + 钉 IP + 计时（`onStats.timings.wait`）。
+  - 抓取结果写入统计（落盘），成为弹道与统计的真实数据源。
+- `ip-pool` 视图「抓取一次」按钮：一键触发真实抓取，就地展示 `outcome / status / 钉住 IP / 耗时 / 字节`。
+- `ip-pool` 新增 `host-pin.test.ts`。
+
+### 变更
+
+- `next.config.ts` 增加 `serverExternalPackages: ["node-wreq"]`，避免 webpack 打包破坏 Rust 原生模块解析。
+- `.env.example` 登记抓取相关环境变量（`IP_POOL_TARGET_URL` / `IP_POOL_BROWSER` / `IP_POOL_PROXY` /
+  `IP_POOL_TIMEOUT_MS` / `IP_POOL_ORIGIN`）。
+- `store.resolvePoolFile` 导出，供配置解析复用。
+
+### 修复
+
+- `fetch` 动作的 `transport_error` 现在回报真实耗时（原先恒为 `0`）。
+
+### 安全
+
+- `AGENTS.md` §0 登记 `node-wreq` 依赖及理由（原生指纹 + 钉 IP）。
+
 ## [0.0.2] - 2026-10-08
 
 ### 变更

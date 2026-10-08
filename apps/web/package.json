@@ -1,6 +1,6 @@
 {
   "name": "vps-panel",
-  "version": "0.0.2",
+  "version": "0.0.3",
   "private": true,
   "scripts": {
     "dev": "next dev",
@@ -13,6 +13,7 @@
     "jose": "^5.9.6",
     "leaflet": "^1.9.4",
     "next": "^15.5.4",
+    "node-wreq": "^3.2.1",
     "react": "^19.1.0",
     "react-dom": "^19.1.0",
     "yaml": "^2.6.1",

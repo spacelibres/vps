@@ -15,6 +15,7 @@ import {
   type PulseItem,
 } from "./pulses";
 import type {
+  FetchActionResult,
   FetchRequestRecord,
   FetchRouteOrigin,
   IpFetchStatRow,
@@ -103,6 +104,8 @@ export function IpPoolView(_props: PluginViewProps) {
   const [tileset, setTileset] = useState<string>("");
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  const [fetching, setFetching] = useState(false);
+  const [lastFetch, setLastFetch] = useState<FetchActionResult | null>(null);
   const [query, setQuery] = useState("");
   const [countryFilter, setCountryFilter] = useState<string | null>(null);
   const [sortKey, setSortKey] = useState<SortKey>("requests");
@@ -207,6 +210,32 @@ export function IpPoolView(_props: PluginViewProps) {
   useEffect(() => {
     void loadStats();
   }, [loadStats]);
+
+  // ── 真实抓取一次（node-wreq 指纹 + 钉池内 IP） ───────────
+  const runFetch = useCallback(async () => {
+    setFetching(true);
+    setError(null);
+    try {
+      const res = await fetch(`/api/plugins/${PLUGIN_ID}/actions/fetch`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ input: {} }),
+        cache: "no-store",
+      });
+      const json = (await res.json()) as
+        | { ok: true; data: FetchActionResult }
+        | { ok: false; error: { message: string } };
+      if (!json.ok) {
+        setError(json.error.message);
+        return;
+      }
+      setLastFetch(json.data);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setFetching(false);
+    }
+  }, []);
 
   // ── SSE 实时流 ──────────────────────────────────────────
   useEffect(() => {
@@ -396,6 +425,9 @@ export function IpPoolView(_props: PluginViewProps) {
           title="概览"
           actions={
             <div className="flex gap-2">
+              <Button onClick={() => void runFetch()} disabled={fetching}>
+                {fetching ? <Spinner label="抓取中" /> : "抓取一次"}
+              </Button>
               <Button variant="ghost" onClick={() => void loadStats()} disabled={loading}>
                 {loading ? <Spinner label="刷新中" /> : "刷新"}
               </Button>
@@ -405,6 +437,21 @@ export function IpPoolView(_props: PluginViewProps) {
           {error && (
             <div className="mb-3">
               <Alert tone="error">{error}</Alert>
+            </div>
+          )}
+          {lastFetch && (
+            <div className="mb-3 rounded-md border border-neutral-200 px-2 py-1.5 text-xs dark:border-neutral-800">
+              <span className="flex items-center gap-2">
+                <StatusBadge tone={outcomeTone(lastFetch.outcome)}>{lastFetch.outcome}</StatusBadge>
+                {lastFetch.status !== undefined && <span>{lastFetch.status}</span>}
+                <span className="font-mono">{lastFetch.pinnedIp ?? "未钉 IP"}</span>
+                <span className="ml-auto text-neutral-500">
+                  {formatMs(lastFetch.durationMs)} · {formatBytes(lastFetch.bytes)}
+                </span>
+              </span>
+              {lastFetch.error && (
+                <div className="mt-1 break-all font-mono text-red-500">{lastFetch.error}</div>
+              )}
             </div>
           )}
           {snapshot ? (

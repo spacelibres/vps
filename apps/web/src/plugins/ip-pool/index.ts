@@ -7,17 +7,22 @@
  * | stats | GET | false | `{}` | `StatsSnapshot`（本插件 types） |
  * | pool | GET | false | `{}` | `PoolPayload`（本插件 types） |
  * | snapshot | POST | false | `{}` | `{ events, rowsMerged, revision }` |
+ * | fetch | POST | false | `{ url?, ip?, browser?, noPin?, timeoutMs? }` | `FetchActionResult`（本插件 types） |
  * | stream | GET | false | `{}` | `Response`（SSE，`raw: true`） |
  *
- * 本插件**不发起任何请求**，只消费外部推送的真实事件；统计落盘到 `data/ip-stats/<hostname>.yaml`。
+ * 本插件的 `fetch` 动作会用 node-wreq 真实抓取一次（浏览器指纹 + 可钉池内 IP），
+ * 结果写入统计即成为弹道数据源；其余动作只消费事件、不发起请求。
  */
 import { z } from "zod";
 import { BasePlugin, defineAction, type PluginAction } from "@/sdk";
+import { fetchConfig } from "./config";
 import { IP_POOL_META } from "./descriptor";
+import { fetchOnce, type PinnedFetchResult } from "./fetch";
+import { getHostPinPool } from "./host-pin";
 import { applyFileSnapshot, snapshotFilesFromEnv } from "./snapshot";
 import { createSseResponse } from "./sse";
 import { getStore } from "./store";
-import type { FetchFlightPath, IngestInput, StatsSnapshot } from "./types";
+import type { FetchActionResult, FetchFlightPath, IngestInput, StatsSnapshot } from "./types";
 import { ipPoolViews } from "./view";
 
 const attemptSchema = z.object({
@@ -178,6 +183,115 @@ export const snapshotAction = defineAction({
   },
 });
 
+const fetchSchema = z.object({
+  url: z.string().optional(),
+  ip: z.string().optional(),
+  browser: z.string().optional(),
+  noPin: z.boolean().optional(),
+  timeoutMs: z.number().int().positive().max(120_000).optional(),
+});
+
+/**
+ * 一期核心：用 node-wreq 真实抓取一次（浏览器指纹 + 可钉池内 IP），
+ * 结果写入统计，从而成为弹道与统计的真实数据源。
+ */
+export const fetchAction = defineAction({
+  id: "fetch",
+  label: "抓取一次",
+  description: "按 IP 池钉住某台前端 IP、带浏览器指纹真实抓取一次并计入统计",
+  method: "POST",
+  needsVps: false,
+  input: fetchSchema,
+  run: async (_ctx, input): Promise<FetchActionResult> => {
+    const cfg = fetchConfig();
+    const store = getStore();
+    const url = input.url ?? cfg.targetUrl;
+    let pin: { hostname: string; ip: string } | null = null;
+    if (!input.noPin) {
+      if (input.ip) {
+        pin = { hostname: cfg.hostname, ip: input.ip };
+      } else {
+        const resolved = getHostPinPool({
+          hostname: cfg.hostname,
+          poolFile: cfg.poolFile,
+        }).resolveForUrl(url);
+        pin = { hostname: resolved.hostname, ip: resolved.pinnedIp };
+      }
+    }
+
+    const requestId = `fetch-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+    const at = Date.now();
+    const startedAt = at;
+    let result: PinnedFetchResult | null = null;
+    let outcome: FetchActionResult["outcome"] = "transport_error";
+    let error: string | undefined;
+
+    try {
+      result = await fetchOnce({
+        url,
+        proxy: cfg.proxy,
+        browser: input.browser ?? cfg.browser,
+        timeoutMs: input.timeoutMs ?? cfg.timeoutMs,
+        pin,
+      });
+      outcome = result.ok ? "success" : "http_error";
+    } catch (err) {
+      error = err instanceof Error ? err.message : String(err);
+    }
+
+    const ip = result?.pinnedIp ?? pin?.ip;
+    const durationMs = result?.durationMs ?? Date.now() - startedAt;
+    store.ingest({
+      origin: cfg.origin,
+      attempts: [
+        {
+          requestId,
+          url,
+          attempt: 1,
+          ip,
+          outcome,
+          httpStatus: result?.status,
+          durationMs,
+          bytes: result?.bytes,
+          at,
+        },
+      ],
+      requests: [
+        {
+          requestId,
+          url,
+          outcome: outcome === "success" ? "success" : "failed",
+          attempts: 1,
+          totalDurationMs: durationMs,
+          finalIp: ip,
+          finalStatus: result?.status,
+          ipsUsed: ip ? [ip] : [],
+          bytes: result?.bytes,
+          at,
+        },
+      ],
+    });
+    store.flush();
+
+    return {
+      requestId,
+      url,
+      outcome,
+      ok: result?.ok ?? false,
+      status: result?.status,
+      statusText: result?.statusText,
+      bytes: result?.bytes ?? 0,
+      durationMs,
+      waitMs: result?.waitMs,
+      contentType: result?.contentType,
+      server: result?.server,
+      pinnedIp: ip,
+      error,
+      recorded: true,
+    };
+  },
+});
+
 /** 出口 C：SSE 实时流。 */
 export const streamAction = defineAction({
   id: "stream",
@@ -195,6 +309,7 @@ export const streamAction = defineAction({
  */
 export const ipPoolActions: readonly PluginAction[] = [
   ingestAction,
+  fetchAction,
   statsAction,
   poolAction,
   snapshotAction,
