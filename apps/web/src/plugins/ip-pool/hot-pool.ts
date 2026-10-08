@@ -1,25 +1,20 @@
 import { createClient, type BrowserProfile, type Client } from "node-wreq";
-import { pickFairHotIp } from "./hot-picker";
 import type { HostPinRecord } from "./types";
 
 /**
  * 每个 IP 一条**常驻热连接**（移植自 `GeoClaw/src/fetch/HotConnectionPool.ts`）。
  *
- * 要点：
- *  - 用 `createClient({ dns.hosts, connectionGroup: ip, poolIdleTimeout, poolMaxIdlePerHost })`
- *    为单个 IP 建一个可复用的 node-wreq `Client`——**握手只做一次**，之后请求复用 keep-alive 连接；
- *  - 预热/探活一次成功（HTTP 200）即入热池；传输失败移出热池、退避后由后台重热；
- *  - `403/429` 入「冷池」暂不参与，200 后再释放；
- *  - 可选保活：空闲接近窗口时发一次轻量请求续命。
+ * 只负责「保持连接」：为每个 IP 建一个可复用的 node-wreq `Client`，
+ * 预热一次成功（HTTP 200）即入热池、之后复用 keep-alive；传输失败移出热池、退避后重热。
  *
- * 与冷路径（每次请求都新建连接）相比，重复跑同一批 IP 时握手开销基本消失。
+ * 本类**不做业务抓取派发**——抓取属于独立的 fetch 插件，本插件只保持整池热连接。
  */
 
 export type HotSlotState = "pending" | "warming" | "hot" | "failed" | "denied";
 
 export interface HotPoolOptions {
   hostname: string;
-  /** 预热 URL（本项目即抓取目标 URL）。 */
+  /** 预热 URL。 */
   warmupUrl: string;
   browser: string;
   proxy?: string;
@@ -54,15 +49,6 @@ export interface HotPoolStats {
   denied: number;
 }
 
-export interface HotProbeResult {
-  ip: string;
-  status: number;
-  bytes: number;
-  durationMs: number;
-  /** `hot` = 复用了已建立的连接；`new` = 本次现场建连。 */
-  via: "hot" | "new";
-}
-
 interface Slot {
   ip: string;
   family: HostPinRecord["family"];
@@ -72,7 +58,6 @@ interface Slot {
   lastError?: string;
   lastUsedAt: number;
   nextReheatAt: number;
-  assignCount: number;
 }
 
 const DEFAULTS = {
@@ -102,7 +87,6 @@ export class HotConnectionPool {
   private readonly coldTimeoutMs: number;
   private readonly slots = new Map<string, Slot>();
   private readonly hotIps: string[] = [];
-  private readonly deniedIps = new Set<string>();
   private reheatTimer: ReturnType<typeof setInterval> | undefined;
 
   constructor(options: HotPoolOptions) {
@@ -129,7 +113,6 @@ export class HotConnectionPool {
         state: "pending",
         lastUsedAt: 0,
         nextReheatAt: 0,
-        assignCount: 0,
       });
     }
   }
@@ -159,22 +142,9 @@ export class HotConnectionPool {
     return { total: this.slots.size, hot, pending, warming, failed, denied };
   }
 
-  hotCount(): number {
-    return this.hotIps.length;
-  }
-
   /** 当前已建立热连接的 IP 列表（绿色通道）。 */
   hotIpList(): string[] {
     return [...this.hotIps];
-  }
-
-  /** 取一条热 IP（公平选路，可偏向复用最近连接）。 */
-  pickHot(warmSlack = 0): string | undefined {
-    const candidates = this.hotIps
-      .map((ip) => this.slots.get(ip))
-      .filter((slot): slot is Slot => Boolean(slot?.client))
-      .map((slot) => ({ ip: slot.ip, lastUsedAt: slot.lastUsedAt, assignCount: slot.assignCount }));
-    return pickFairHotIp(candidates, { warmSlack });
   }
 
   /**
@@ -187,65 +157,6 @@ export class HotConnectionPool {
       await this.warmOne(slot.ip);
     });
     return this.stats();
-  }
-
-  /**
-   * 探活 / 抓取单个 IP：优先复用热连接，否则现场建连。
-   * 成功（200）转为热连接；`403/429` 入冷池；传输错误移出热池。
-   */
-  async probe(ip: string, url: string = this.options.warmupUrl): Promise<HotProbeResult> {
-    const slot = this.slots.get(ip);
-    if (!slot) throw new Error(`热池未登记的 IP：${ip}`);
-
-    const reuse = slot.client;
-    const via: "hot" | "new" = reuse ? "hot" : "new";
-    const client = reuse ?? this.createClient(ip);
-    // 冷探活用更短超时：尚未入热池的 IP 若是死的，不应拖满总超时。
-    const timeout = reuse ? this.options.timeoutMs : this.coldTimeoutMs;
-    slot.assignCount += 1;
-
-    const started = Date.now();
-    try {
-      const res = await client.get(url, { timeout });
-      const buf = new Uint8Array(await res.arrayBuffer());
-      const durationMs = Date.now() - started;
-      slot.lastStatus = res.status;
-
-      if (res.status === this.successStatus) {
-        if (!reuse) {
-          slot.client?.close();
-          slot.client = client;
-        }
-        slot.state = "hot";
-        slot.lastError = undefined;
-        slot.lastUsedAt = Date.now();
-        this.deniedIps.delete(ip);
-        this.addHot(ip);
-        return { ip, status: res.status, bytes: buf.length, durationMs, via };
-      }
-
-      // 非 200：不接管新连接。
-      if (!reuse) client.close();
-      if (this.deniedStatuses.includes(res.status)) {
-        slot.state = "denied";
-        this.deniedIps.add(ip);
-        this.evictHot(ip);
-      } else {
-        slot.state = "failed";
-        slot.nextReheatAt = Date.now() + this.backoffMs;
-      }
-      return { ip, status: res.status, bytes: buf.length, durationMs, via };
-    } catch (err) {
-      // 传输层失败：丢弃该连接（热连接坏了 / 新连接没建成）。
-      slot.client?.close();
-      slot.client = undefined;
-      this.evictHot(ip);
-      slot.state = "failed";
-      slot.lastError = err instanceof Error ? err.message : String(err);
-      slot.nextReheatAt = Date.now() + this.backoffMs;
-      if (!reuse) client.close();
-      throw err;
-    }
   }
 
   close(): void {
@@ -293,14 +204,12 @@ export class HotConnectionPool {
         slot.state = "hot";
         slot.lastError = undefined;
         slot.lastUsedAt = Date.now();
-        this.deniedIps.delete(ip);
         this.addHot(ip);
         return;
       }
       client.close();
       if (outcome === "denied") {
         slot.state = "denied";
-        this.deniedIps.add(ip);
         return;
       }
       slot.state = "failed";
@@ -371,7 +280,7 @@ export class HotConnectionPool {
   }
 }
 
-/** 有界并发执行（与 `mapPool` 同语义，独立此处避免循环依赖）。 */
+/** 有界并发执行（`concurrency <= 0` 表示不限并发）。 */
 async function runConcurrent<T>(
   items: readonly T[],
   concurrency: number,

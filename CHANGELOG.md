@@ -7,6 +7,23 @@
 
 ## [未发布]
 
+## [0.0.27] - 2026-10-08
+
+### 移除
+
+- `ip-pool` 移除全部本地抓取/测试入口：`fetch`（抓取一次）、`fetchBatch`（全池抓取）、
+  `batchStatus`（全池抓取进度）三个动作，以及 `fetch.ts` / `host-pin.ts` / `concurrency.ts` /
+  `hot-picker.ts` 与 `batch.ts` 的作业机制。
+  测试/压测一律在**系统之外**进行：外部发送方经 `ingest` / `snapshot` 接入事件。
+- 移除 `hot-pool.ts` 中不再使用的 `probe` / `pickHot` / `hotCount` / `HotProbeResult`
+  （业务抓取派发）及其 `deniedIps` 记账；删除 `hot-picker.ts`。
+
+### 变更
+
+- `ip-pool` 收敛为「管理 + 统计 + 显示」：不发起业务抓取，只消费外部事件；
+  仅保留整池常驻热连接（`hot-pool.ts` + `warm.ts`，面板打开即预热整池；`IP_POOL_AUTO_WARM=0` 可关闭）。
+  设计文档同步更新（§2 / §11 / §16），并修正 `AGENTS.md` 中 `node-wreq` 的用途说明。
+
 ## [0.0.26] - 2026-10-08
 
 ### 变更

@@ -7,34 +7,21 @@
  * | stats | GET | false | `{}` | `StatsSnapshot`（本插件 types） |
  * | pool | GET | false | `{}` | `PoolPayload`（本插件 types） |
  * | snapshot | POST | false | `{}` | `{ events, rowsMerged, revision }` |
- * | fetch | POST | false | `{ url?, ip?, browser?, noPin?, timeoutMs? }` | `FetchActionResult`（本插件 types） |
- * | fetchBatch | POST | false | `{ url?, ips?, family?, limit?, concurrency?(0=全速), browser?, timeoutMs? }` | `FetchBatchStatus`（本插件 types） |
- * | batchStatus | GET | false | `{}` | `FetchBatchStatus`（本插件 types） |
  * | resetStats | POST | false | `{}` | `ResetStatsResult`（本插件 types） |
  * | stream | GET | false | `{}` | `Response`（SSE，`raw: true`） |
  *
- * 本插件的 `fetch` / `fetchBatch` 动作会用 node-wreq 真实抓取（浏览器指纹 + 可钉池内 IP），
- * 结果写入统计即成为弹道数据源；其余动作只消费事件、不发起请求。
+ * 本插件只做 IP 池管理、请求统计与航线可视化：不发起任何业务抓取，
+ * 事件由外部发送方经 `ingest` / `snapshot` 接入；抓取派发属于独立的 fetch 插件。
  */
 import { z } from "zod";
 import { BasePlugin, defineAction, type PluginAction } from "@/sdk";
-import { batchStatus, ensurePoolWarm, hotIpList, isBatchRunning, startBatch } from "./batch";
-import { fetchConfig } from "./config";
 import { IP_POOL_META } from "./descriptor";
-import { fetchOnce, type PinnedFetchResult } from "./fetch";
-import { getHostPinPool } from "./host-pin";
 import { applyFileSnapshot, snapshotFilesFromEnv } from "./snapshot";
 import { createSseResponse } from "./sse";
 import { getStore } from "./store";
-import type {
-  FetchActionResult,
-  FetchBatchStatus,
-  FetchFlightPath,
-  IngestInput,
-  ResetStatsResult,
-  StatsSnapshot,
-} from "./types";
+import type { FetchFlightPath, IngestInput, ResetStatsResult, StatsSnapshot } from "./types";
 import { ipPoolViews } from "./view";
+import { ensurePoolWarm, hotIpList } from "./warm";
 
 const attemptSchema = z.object({
   requestId: z.string().min(1),
@@ -195,164 +182,6 @@ export const snapshotAction = defineAction({
   },
 });
 
-const fetchSchema = z.object({
-  url: z.string().optional(),
-  ip: z.string().optional(),
-  browser: z.string().optional(),
-  noPin: z.boolean().optional(),
-  timeoutMs: z.number().int().positive().max(120_000).optional(),
-});
-
-/**
- * 一期核心：用 node-wreq 真实抓取一次（浏览器指纹 + 可钉池内 IP），
- * 结果写入统计，从而成为弹道与统计的真实数据源。
- */
-export const fetchAction = defineAction({
-  id: "fetch",
-  label: "抓取一次",
-  description: "按 IP 池钉住某台前端 IP、带浏览器指纹真实抓取一次并计入统计",
-  method: "POST",
-  needsVps: false,
-  input: fetchSchema,
-  run: async (_ctx, input): Promise<FetchActionResult> => {
-    const cfg = fetchConfig();
-    const store = getStore();
-    const url = input.url ?? cfg.targetUrl;
-    let pin: { hostname: string; ip: string } | null = null;
-    if (!input.noPin) {
-      if (input.ip) {
-        pin = { hostname: cfg.hostname, ip: input.ip };
-      } else {
-        const resolved = getHostPinPool({
-          hostname: cfg.hostname,
-          poolFile: cfg.poolFile,
-        }).resolveForUrl(url);
-        pin = { hostname: resolved.hostname, ip: resolved.pinnedIp };
-      }
-    }
-
-    const requestId = `fetch-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
-    const at = Date.now();
-    const startedAt = at;
-    let result: PinnedFetchResult | null = null;
-    let outcome: FetchActionResult["outcome"] = "transport_error";
-    let error: string | undefined;
-
-    try {
-      result = await fetchOnce({
-        url,
-        proxy: cfg.proxy,
-        browser: input.browser ?? cfg.browser,
-        timeoutMs: input.timeoutMs ?? cfg.timeoutMs,
-        pin,
-      });
-      outcome = result.ok ? "success" : "http_error";
-    } catch (err) {
-      error = err instanceof Error ? err.message : String(err);
-    }
-
-    const ip = result?.pinnedIp ?? pin?.ip;
-    const durationMs = result?.durationMs ?? Date.now() - startedAt;
-    store.ingest({
-      origin: cfg.origin,
-      attempts: [
-        {
-          requestId,
-          url,
-          attempt: 1,
-          ip,
-          outcome,
-          httpStatus: result?.status,
-          durationMs,
-          bytes: result?.bytes,
-          at,
-        },
-      ],
-      requests: [
-        {
-          requestId,
-          url,
-          outcome: outcome === "success" ? "success" : "failed",
-          attempts: 1,
-          totalDurationMs: durationMs,
-          finalIp: ip,
-          finalStatus: result?.status,
-          ipsUsed: ip ? [ip] : [],
-          bytes: result?.bytes,
-          at,
-        },
-      ],
-    });
-    store.flush();
-
-    return {
-      requestId,
-      url,
-      outcome,
-      ok: result?.ok ?? false,
-      status: result?.status,
-      statusText: result?.statusText,
-      bytes: result?.bytes ?? 0,
-      durationMs,
-      waitMs: result?.waitMs,
-      contentType: result?.contentType,
-      server: result?.server,
-      pinnedIp: ip,
-      error,
-      recorded: true,
-    };
-  },
-});
-
-const fetchBatchSchema = z.object({
-  url: z.string().optional(),
-  ips: z.array(z.string()).optional(),
-  family: z.enum(["all", "ipv4", "ipv6"]).default("all"),
-  limit: z.number().int().positive().max(5000).optional(),
-  /** `0`（默认）= 不限并发、全速；> 0 = 显式限并发。 */
-  concurrency: z.number().int().min(0).max(4096).default(0),
-  browser: z.string().optional(),
-  timeoutMs: z.number().int().positive().max(120_000).optional(),
-});
-
-/**
- * 批量抓取：对全池（或指定 IP / 地址族 / 限量）逐 IP 钉住后抓取一次。
- * **默认全速**（`concurrency: 0` 不限并发），先把吞吐跑满，之后再谈调优。
- * **后台运行**，立即返回作业进度；逐条结果写入 Store，经 SSE 实时推送弹道。
- */
-export const fetchBatchAction = defineAction({
-  id: "fetchBatch",
-  label: "全池抓取",
-  description: "对 IP 池内每个 IP 钉住后各抓取一次（有界并发，后台运行）",
-  method: "POST",
-  needsVps: false,
-  input: fetchBatchSchema,
-  run: (_ctx, input): Promise<FetchBatchStatus> => {
-    if (isBatchRunning()) return Promise.resolve(batchStatus());
-    return Promise.resolve(
-      startBatch({
-        url: input.url,
-        ips: input.ips,
-        family: input.family,
-        limit: input.limit,
-        concurrency: input.concurrency,
-        browser: input.browser,
-        timeoutMs: input.timeoutMs,
-      }),
-    );
-  },
-});
-
-/** 出口：批量抓取作业进度。 */
-export const batchStatusAction = defineAction({
-  id: "batchStatus",
-  input: z.object({}),
-  label: "全池抓取进度",
-  method: "GET",
-  needsVps: false,
-  run: (): Promise<FetchBatchStatus> => Promise.resolve(batchStatus()),
-});
-
 /**
  * 重置统计：清空所有 IP 计数与最近事件并落盘。
  * 远程 SSE 客户端通过 `resetEpoch` 变化收到 `reset` 事件后清空本地脉冲/采样/日志。
@@ -388,9 +217,6 @@ export const streamAction = defineAction({
  */
 export const ipPoolActions: readonly PluginAction[] = [
   ingestAction,
-  fetchAction,
-  fetchBatchAction,
-  batchStatusAction,
   resetStatsAction,
   statsAction,
   poolAction,
@@ -399,9 +225,9 @@ export const ipPoolActions: readonly PluginAction[] = [
 ];
 
 /**
- * IP 池插件：管理 Google 前端 IP 池、统计真实请求表现、绘制弹道航线。
- * `fetch` / `fetchBatch` 用 node-wreq 按池内 IP 发起真实抓取（指纹 + 钉 IP + 代理），
- * 其余动作只消费已落盘的真实事件，不额外发起请求。
+ * IP 池插件：管理 Google 前端 IP 池、统计请求表现、绘制航线。
+ * 只消费外部经 `ingest` / `snapshot` 接入的事件，**不发起业务抓取**；
+ * 仅保持整池常驻热连接（绿色通道）。
  */
 export class IpPoolPlugin extends BasePlugin {
   readonly id = IP_POOL_META.id;

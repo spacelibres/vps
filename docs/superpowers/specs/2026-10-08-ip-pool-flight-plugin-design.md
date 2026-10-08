@@ -18,7 +18,7 @@
 - 事件实时推送到浏览器（SSE）。
 
 **不做（明确排除）：**
-- **不发起任何请求**。插件只**消费**事件；「怎么调用 IP 池」不在本插件内。
+- **不发起业务抓取**（抓取派发属于独立的 fetch 插件）。插件只**消费**外部事件；仅后台保持整池**常驻热连接**（预热，见 §16）。
 - **不集成 GeoClaw**：不内嵌、不移植其服务端、不连其 WS、不读其文件。
 - **不碰 VPS / KiwiVM**：与那 13 台机器无关。
 
@@ -207,13 +207,22 @@ type PoolAggregate = {
 
 ```
 apps/web/src/plugins/ip-pool/
-├── index.ts          # 插件类 + 动作：ingest（POST, needsVps:false）、stats（GET, needsVps:false）、pool（GET, needsVps:false）、stream（GET, raw:true, needsVps:false）
-├── store.ts          # 内存 Store（池/统计/最近事件/聚合/revision）
-├── pool.ts           # kh.google.com.yaml 解析 + 聚合（PoolAggregate）
-├── ingest.ts         # 入口处理：去重、记账、geo 补全、航路合成
-├── snapshot.ts       # 文件快照读取（池/统计/JSONL）
-├── flight.ts         # 航路合成 + 弹道几何 + 配色（借鉴 arc.js，纯函数、可单测）
-└── view.tsx          # "use client" 视图：地图 + 侧栏（聚合树/统计表/日志/概览）
+├── index.ts          # 插件类 + 动作：ingest / stats / pool / snapshot / resetStats / stream(SSE)
+├── descriptor.ts     # 客户端安全：元数据 + 视图
+├── view.tsx          # "use client" 视图：地图 + 侧栏（聚合树/统计表/日志/概览）
+├── types.ts          # 领域类型（客户端安全）
+├── store.ts          # 内存 Store（池/统计/最近事件/聚合/revision/resetEpoch）+ 落盘
+├── pool.ts           # kh.google.com.yaml 解析 + 聚合（PoolCountryNode[]）
+├── snapshot.ts       # 文件快照读取（JSONL 事件 + 统计 YAML）
+├── flight.ts         # 航路合成 + 弹道几何 + 配色（纯函数）
+├── pulses.ts         # 脉冲骨架 / 激活 / 剪枝（纯函数）
+├── geo.ts / origin.ts# 地理点与弹道起点（纯逻辑）
+├── hot-pool.ts       # 整池常驻热连接池（只保持连接，不做业务抓取）
+├── warm.ts           # 热池单例 + 面板打开即整池预热
+├── sse.ts            # SSE 实时流（snapshot / pulse / metrics / reset）
+├── net.ts            # 读 /proc/net/dev 网卡累计流量
+├── map-layer.ts / bing.ts # Leaflet 脉冲图层 / Bing 底图（回退 CARTO dark）
+└── <name>.test.ts    # 纯逻辑单测
 ```
 
 ## 12. 测试与验证
@@ -251,3 +260,16 @@ apps/web/src/plugins/ip-pool/
 - **落盘位置**：`apps/web/data/ip-stats/<hostname>.yaml`（已 gitignore；原子写：临时文件 + rename）。
 - **依赖**：新增 `leaflet`（暗色底图用 CARTO tiles，无 key）。
 - **已验证**：`tsc` 无错；vitest 23/23 通过；`next build` 通过；真实链路 —— `pool` 返回 3801 个 IP / 40 国 / 106 城市；`ingest` 幂等计数正确；`stats` 汇总与逐 IP 行正确且**自动从池文件回填地理位置**；落盘与重启回填正常；SSE 正常下发 `hello` / `snapshot`。
+
+## 16. 变更记录
+
+### 2026-10-08：移除测试工具，ip-pool 收敛为「管理 + 统计」
+
+- **删除**本地抓取/测试入口：`fetch`（抓取一次）、`fetchBatch`（全池抓取）、`batchStatus`（全池抓取进度）
+  三个动作及其实现（`fetch.ts` / `host-pin.ts` / `concurrency.ts` / `hot-picker.ts`，以及 `batch.ts` 的作业机制与
+  `hot-pool.ts` 的 `probe`/`pickHot` 派发方法）。测试/压测一律在**系统之外**进行
+  （外部发送方经 `ingest` 接入事件）。
+- **保留**整池常驻热连接（`hot-pool.ts` + `warm.ts`）：面板打开即在后台预热整池，
+  为可视化提供「绿色通道」热状态；`IP_POOL_AUTO_WARM=0` 可关闭。
+- 移除面板上常驻的「全池抓取进度」卡片。
+- 新增 `resetStats`（重置统计）动作：清空所有计数与最近事件并落盘，经 SSE `reset` 广播到各客户端。

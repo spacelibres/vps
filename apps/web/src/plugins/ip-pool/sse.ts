@@ -1,7 +1,7 @@
-import { hotIpList } from "./batch";
 import { readNicTotals } from "./net";
 import { getStore } from "./store";
 import type { StreamMetrics } from "./types";
+import { hotIpList } from "./warm";
 
 const POLL_MS = 1000;
 const HEARTBEAT_MS = 15_000;

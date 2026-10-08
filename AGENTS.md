@@ -12,8 +12,9 @@
   - `yaml`：读取 IP 池文件与统计落盘。
   - `jose`：会话 cookie 签名。
   - `leaflet`：地图底图与图层。
-  - `node-wreq`：`ip-pool` 插件**真实抓取**所需——浏览器 **TLS/JA3/JA4 + HTTP2 指纹**与**钉 IP**
+  - `node-wreq`：`ip-pool` 插件**保持整池常驻热连接**（预热/保活）所需——浏览器 **TLS/JA3/JA4 + HTTP2 指纹**与**钉 IP**
     （Rust 原生绑定，带 `linux-x64-gnu` 预编译；直连不通时配合 `IP_POOL_PROXY` 代理）。
+    插件**不做业务抓取派发**（抓取属于独立 fetch 插件）。
 - 包管理器 pnpm；Node ≥ 20。
 - 表单与校验的**唯一元数据来源是 zod schema**。
 
