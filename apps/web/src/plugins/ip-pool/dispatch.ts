@@ -86,6 +86,7 @@ interface RunDispatchArgs {
 async function runDispatch({ pool, hot, url, count, workers }: RunDispatchArgs): Promise<void> {
   const cfg = fetchConfig();
   const store = getStore();
+  const timeoutMs = cfg.dispatchTimeoutMs;
   let next = 0;
   let seq = 0;
 
@@ -102,7 +103,7 @@ async function runDispatch({ pool, hot, url, count, workers }: RunDispatchArgs):
       let durationMs: number | undefined;
 
       try {
-        const result = await pool.dispatch(ip, url);
+        const result = await pool.dispatch(ip, url, timeoutMs);
         status = result.status;
         bytes = result.bytes;
         durationMs = result.durationMs;

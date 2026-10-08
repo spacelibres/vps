@@ -170,9 +170,14 @@ export class HotConnectionPool {
   /**
    * 用**指定热 IP 的常驻连接**发一次请求（绿色通道）。
    * 只走已建连的热连接；该 IP 未处于热状态直接报错。
-   * `403/429` 丢弃该连接并退出热池；传输失败同样丢弃、由后台重热。
+   * 单请求超时由 `timeoutMs` 控制（快速失败，不占着 worker）。
+   * `403/429` 丢弃该连接并退出热池；传输失败/超时同样丢弃、由后台重热。
    */
-  async dispatch(ip: string, url: string = this.options.warmupUrl): Promise<HotDispatchResult> {
+  async dispatch(
+    ip: string,
+    url: string = this.options.warmupUrl,
+    timeoutMs: number = this.options.timeoutMs,
+  ): Promise<HotDispatchResult> {
     const slot = this.slots.get(ip);
     if (!slot) throw new Error(`热池未登记的 IP：${ip}`);
     const client = slot.client;
@@ -180,7 +185,7 @@ export class HotConnectionPool {
 
     const started = Date.now();
     try {
-      const res = await client.get(url, { timeout: this.options.timeoutMs });
+      const res = await client.get(url, { timeout: timeoutMs });
       const buf = new Uint8Array(await res.arrayBuffer());
       const durationMs = Date.now() - started;
       slot.lastStatus = res.status;
