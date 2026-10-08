@@ -1,0 +1,17 @@
+# Caddy 反向代理模板 —— 由 deploy/setup-caddy.sh 生成到 /etc/caddy/Caddyfile
+#
+# 作用：对外用 443（HTTPS，自动申请 Let's Encrypt 证书）→ 转发到本机 __PORT__（面板）。
+# 占位符：__DOMAIN__ / __PORT__ / __GLOBAL__
+
+__GLOBAL__
+
+__DOMAIN__ {
+	encode zstd gzip
+
+	# 面板（Next.js）监听 127.0.0.1:__PORT__。
+	# Caddy 会自动带上 X-Forwarded-Proto / X-Forwarded-For，应用据此判定 Secure cookie。
+	reverse_proxy 127.0.0.1:__PORT__
+
+	# 关闭对上游的响应缓冲，保证 ip-pool 的 SSE（实时弹道）不被积压。
+	flush_interval -1
+}

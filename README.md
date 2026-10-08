@@ -74,6 +74,22 @@ pm2 logs vps-panel                        # 看日志
 pm2 restart vps-panel --update-env        # 重启
 ```
 
+**反向代理（可选：Caddy 自动 HTTPS，443 → 3000）**
+
+```bash
+# 方式 1：随安装一起（设置 DOMAIN 即自动配好 Caddy）
+DOMAIN=panel.example.com PANEL_PASSWORD='你的强密码' bash deploy/install.sh
+
+# 方式 2：单独配置（可重复执行）
+DOMAIN=panel.example.com bash deploy/setup-caddy.sh
+```
+
+Caddy 会占用 **80/443**、自动申请 Let's Encrypt 证书，并把 `https://<域名>` 反代到 `127.0.0.1:3000`，
+同时带上 `X-Forwarded-Proto`（应用据此自动给 cookie 加 `Secure`），且关闭响应缓冲以保 SSE 实时性。
+前置条件：域名 `A`/`AAAA` 已指向本机、80/443 空闲。
+
+> 上线后建议把面板进程改为只监听本机：`HOST=127.0.0.1` 重新安装或 `pm2 restart vps-panel --update-env`。
+
 > 首次部署后记得填 `apps/web/config/vps.yaml`（填入真实 veid/api_key/alias）再重启。
 > 开机自启：脚本末尾会打印一条 `sudo env ...` 命令，以 root 执行一次即可。
 

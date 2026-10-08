@@ -7,6 +7,18 @@
 
 ## [未发布]
 
+## [0.0.11] - 2026-10-08
+
+### 新增
+
+- **Caddy 反向代理（443 → 3000，自动 HTTPS）**：
+  - `deploy/Caddyfile.template`：站点模板（auto-HTTPS、反代 `127.0.0.1:__PORT__`、
+    `flush_interval -1` 保 SSE 实时、可选 ACME 邮箱）。
+  - `deploy/setup-caddy.sh`：按 `DOMAIN`/`PORT`/`EMAIL` 生成 `/etc/caddy/Caddyfile`、
+    校验、`systemctl enable --now caddy`，并自检 `https://<域名>/login`。
+  - `deploy/install.sh`：当设置 `DOMAIN` 时自动执行 `setup-caddy.sh`，并在结尾提示 HTTPS 地址。
+  - `README.md` 补充 Caddy 反代用法与 `HOST=127.0.0.1` 监听收紧建议。
+
 ## [0.0.10] - 2026-10-08
 
 ### 修复

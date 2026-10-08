@@ -15,6 +15,8 @@
 #   APP_NAME=my-panel     pm2 进程名（默认 vps-panel）
 #   INSTALL_DIR=/opt/...  方式 B 的克隆目录（默认 /opt/vps-panel）
 #   INSTALL_NODE=0        禁止在缺 Node 时自动安装（默认允许，仅 Debian/Ubuntu）
+#   DOMAIN=panel.example.com  设置后自动用 Caddy 把 443 → 127.0.0.1:PORT（自动 HTTPS）
+#   EMAIL=me@example.com  可选，ACME 账号邮箱
 #
 set -euo pipefail
 
@@ -201,7 +203,13 @@ else
 fi
 pm2 save >/dev/null
 
-# ── 6. 开机自启 ──────────────────────────────────────────────
+# ── 6. 可选：Caddy 反向代理（设置 DOMAIN 时，443 → 127.0.0.1:PORT）───
+if [ -n "${DOMAIN:-}" ]; then
+  log "配置 Caddy：https://$DOMAIN → 127.0.0.1:$PORT"
+  DOMAIN="$DOMAIN" PORT="$PORT" EMAIL="${EMAIL:-}" bash "$SCRIPT_DIR/setup-caddy.sh"
+fi
+
+# ── 7. 开机自启 ──────────────────────────────────────────────
 STARTUP_CMD="$(pm2 startup 2>&1 | grep -E '^sudo env ' || true)"
 if [ -n "$STARTUP_CMD" ]; then
   warn "配置开机自启：请以 root 执行下面这条命令（脚本不代为 sudo）"
@@ -210,11 +218,15 @@ else
   ok "pm2 开机自启已配置"
 fi
 
-# ── 7. 结果 ──────────────────────────────────────────────────
+# ── 8. 结果 ──────────────────────────────────────────────────
 sleep 2
 pm2 describe "$APP_NAME" 2>/dev/null | grep -E 'status|restarts|uptime' || true
 printf '\n'
-ok "部署完成 → http://<服务器IP>:$PORT"
+if [ -n "${DOMAIN:-}" ]; then
+  ok "部署完成 → https://$DOMAIN   （http://<服务器IP>:$PORT 仍可直连）"
+else
+  ok "部署完成 → http://<服务器IP>:$PORT"
+fi
 if [ -n "$GENERATED_PW" ]; then
   warn "已为你生成面板密码：$GENERATED_PW   （请自行保存，可改 apps/web/.env 后重启）"
 fi
