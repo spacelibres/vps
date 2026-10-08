@@ -7,6 +7,22 @@
 
 ## [未发布]
 
+## [0.0.5] - 2026-10-08
+
+### 新增
+
+- **一键部署（VPS + pm2 进程守护）**：新增 `deploy/`。
+  - `deploy/install.sh`：一键安装 / 更新。检查并（Debian/Ubuntu 下）自动安装 Node ≥ 20，
+    启用 pnpm、安装 pm2，生成 `apps/web/.env`（随机 `SESSION_SECRET`），装依赖、`next build`、
+    `pm2 start` + `pm2 save`；支持 `curl … | bash` 自克隆到 `/opt/vps-panel`。
+    可调：`PANEL_PASSWORD` / `PORT` / `HOST` / `APP_NAME` / `INSTALL_DIR` / `INSTALL_NODE`。
+  - `deploy/ecosystem.config.cjs`：pm2 配置（`cwd` 锁定 `apps/web`、内存上限、自动重启、日志）。
+- `README.md` 新增「部署（VPS + pm2 进程守护）」章节。
+
+### 变更
+
+- `.gitignore` 忽略 `logs/`（pm2 日志）。
+
 ## [0.0.4] - 2026-10-08
 
 ### 新增

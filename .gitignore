@@ -19,6 +19,9 @@ apps/web/config/vps.yaml
 # 插件运行时数据（IP 池统计落盘等）
 apps/web/data/
 
+# pm2 日志
+logs/
+
 # misc
 *.log
 .DS_Store

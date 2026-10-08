@@ -42,6 +42,41 @@ vps:
 
 该文件已被 `.gitignore` 忽略，**不会进版本库**；`api_key` 只在服务端加载，绝不下发到浏览器。
 
+## 部署（VPS + pm2 进程守护）
+
+生产部署使用 `pm2` 常驻 `next start`。部署产物在 [`deploy/`](./deploy)：
+`install.sh`（一键安装/更新）与 `ecosystem.config.cjs`（pm2 配置）。
+
+**方式 A · 一行命令（服务器上自动克隆到 `/opt/vps-panel`）**：
+
+```bash
+PANEL_PASSWORD='你的强密码' \
+  bash -c "$(curl -fsSL https://raw.githubusercontent.com/spacelibres/vps/main/deploy/install.sh)"
+```
+
+**方式 B · 先克隆再安装**：
+
+```bash
+git clone https://github.com/spacelibres/vps.git /opt/vps-panel
+cd /opt/vps-panel
+PANEL_PASSWORD='你的强密码' bash deploy/install.sh
+```
+
+脚本会：检查/安装 Node ≥ 20（Debian/Ubuntu 下自动装 Node 22）、启用 pnpm、安装 pm2、
+生成 `apps/web/.env`（随机 `SESSION_SECRET`）、装依赖、`next build`、`pm2 start` 并 `pm2 save`。
+
+**可调环境变量**：`PORT`（默认 `3000`）、`HOST`（默认 `0.0.0.0`）、`APP_NAME`（默认 `vps-panel`）、
+`INSTALL_DIR`（默认 `/opt/vps-panel`）。
+
+```bash
+PORT=8080 bash deploy/install.sh          # 换端口
+pm2 logs vps-panel                        # 看日志
+pm2 restart vps-panel --update-env        # 重启
+```
+
+> 首次部署后记得填 `apps/web/config/vps.yaml`（填入真实 veid/api_key/alias）再重启。
+> 开机自启：脚本末尾会打印一条 `sudo env ...` 命令，以 root 执行一次即可。
+
 ## 目录结构
 
 ```
