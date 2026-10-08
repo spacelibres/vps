@@ -30,7 +30,7 @@ export function buildUpstreamUrl(req: UpstreamRequest): string {
     case "planetoid":
       return `${base}/PlanetoidMetadata`;
     case "bulk": {
-      if (!req.path) throw new Error("bulk 请求缺少 path");
+      if (req.path === undefined) throw new Error("bulk 请求缺少 path");
       if (req.epoch === undefined) throw new Error("bulk 请求缺少 epoch");
       return `${base}/BulkMetadata/pb=!1m2!1s${req.path}!2u${req.epoch}`;
     }

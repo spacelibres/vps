@@ -13,6 +13,10 @@ describe("buildUpstreamUrl", () => {
     expect(buildUpstreamUrl({ kind: "bulk", path: "1015", epoch: 42 })).toBe(
       `${EARTH_RT_BASE}/BulkMetadata/pb=!1m2!1s1015!2u42`,
     );
+    // path 可以是空串（根节点）：就是你给的那条 URL
+    expect(buildUpstreamUrl({ kind: "bulk", path: "", epoch: 1015 })).toBe(
+      `${EARTH_RT_BASE}/BulkMetadata/pb=!1m2!1s!2u1015`,
+    );
   });
 
   it("raw → 原样 url", () => {
