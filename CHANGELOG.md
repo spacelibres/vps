@@ -7,6 +7,17 @@
 
 ## [未发布]
 
+## [0.0.9] - 2026-10-08
+
+### 修复
+
+- 新增 `apps/web/pnpm-workspace.yaml`，用 `allowBuilds`（pnpm ≥ 10 的正确位置）声明允许执行
+  构建脚本的原生依赖：`esbuild` / `@tailwindcss/oxide` / `sharp` / `node-wreq`。
+
+### 移除
+
+- 撤销 v0.0.8 里在 `package.json` 加的 `pnpm.onlyBuiltDependencies`（pnpm 12 已不再读取该字段）。
+
 ## [0.0.8] - 2026-10-08
 
 ### 修复
