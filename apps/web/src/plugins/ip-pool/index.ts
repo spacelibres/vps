@@ -7,19 +7,29 @@
  * | stats | GET | false | `{}` | `StatsSnapshot`（本插件 types） |
  * | pool | GET | false | `{}` | `PoolPayload`（本插件 types） |
  * | snapshot | POST | false | `{}` | `{ events, rowsMerged, revision }` |
+ * | dispatch | POST | false | `{ url?, count }` | `DispatchStatus`（本插件 types） |
+ * | dispatchStatus | GET | false | `{}` | `DispatchStatus`（本插件 types） |
  * | resetStats | POST | false | `{}` | `ResetStatsResult`（本插件 types） |
  * | stream | GET | false | `{}` | `Response`（SSE，`raw: true`） |
  *
- * 本插件只做 IP 池管理、请求统计与航线可视化：不发起任何业务抓取，
- * 事件由外部发送方经 `ingest` / `snapshot` 接入；抓取派发属于独立的 fetch 插件。
+ * 本插件只做 IP 池管理、请求统计与航线可视化：不主动发起抓取，
+ * 事件由外部发送方经 `ingest` / `snapshot` 接入；`dispatch` 由外部触发，
+ * 复用**已预热的热连接**出网（绿色通道）。
  */
 import { z } from "zod";
 import { BasePlugin, defineAction, type PluginAction } from "@/sdk";
 import { IP_POOL_META } from "./descriptor";
+import { dispatchStatus, isDispatchRunning, startDispatch } from "./dispatch";
 import { applyFileSnapshot, snapshotFilesFromEnv } from "./snapshot";
 import { createSseResponse } from "./sse";
 import { getStore } from "./store";
-import type { FetchFlightPath, IngestInput, ResetStatsResult, StatsSnapshot } from "./types";
+import type {
+  DispatchStatus,
+  FetchFlightPath,
+  IngestInput,
+  ResetStatsResult,
+  StatsSnapshot,
+} from "./types";
 import { ipPoolViews } from "./view";
 import { ensurePoolWarm, hotIpList } from "./warm";
 
@@ -183,6 +193,40 @@ export const snapshotAction = defineAction({
 });
 
 /**
+ * 派发：让外部（本机）触发一次「经热池出网」作业。
+ * 复用已预热的常驻热连接（绿色通道）逐条请求，结果写统计 + 生成弹道。
+ * 后台异步运行，立即返回进度快照；`count` 为请求总数。
+ */
+const dispatchSchema = z.object({
+  /** 目标 URL；缺省用配置的 `IP_POOL_TARGET_URL`。 */
+  url: z.string().optional(),
+  count: z.number().int().positive().max(1_000_000),
+});
+
+export const dispatchAction = defineAction({
+  id: "dispatch",
+  label: "经热池派发",
+  description: "用已预热的常驻热连接对指定 URL 发起 count 次请求（异步，结果计入统计）",
+  method: "POST",
+  needsVps: false,
+  input: dispatchSchema,
+  run: (_ctx, input): Promise<DispatchStatus> => {
+    if (isDispatchRunning()) return Promise.resolve(dispatchStatus());
+    return Promise.resolve(startDispatch({ url: input.url, count: input.count }));
+  },
+});
+
+/** 出口：派发作业进度。 */
+export const dispatchStatusAction = defineAction({
+  id: "dispatchStatus",
+  input: z.object({}),
+  label: "派发进度",
+  method: "GET",
+  needsVps: false,
+  run: (): Promise<DispatchStatus> => Promise.resolve(dispatchStatus()),
+});
+
+/**
  * 重置统计：清空所有 IP 计数与最近事件并落盘。
  * 远程 SSE 客户端通过 `resetEpoch` 变化收到 `reset` 事件后清空本地脉冲/采样/日志。
  * 热连接属运行时状态，不受影响。
@@ -217,6 +261,8 @@ export const streamAction = defineAction({
  */
 export const ipPoolActions: readonly PluginAction[] = [
   ingestAction,
+  dispatchAction,
+  dispatchStatusAction,
   resetStatsAction,
   statsAction,
   poolAction,
@@ -226,8 +272,8 @@ export const ipPoolActions: readonly PluginAction[] = [
 
 /**
  * IP 池插件：管理 Google 前端 IP 池、统计请求表现、绘制航线。
- * 只消费外部经 `ingest` / `snapshot` 接入的事件，**不发起业务抓取**；
- * 仅保持整池常驻热连接（绿色通道）。
+ * 只消费外部经 `ingest` / `snapshot` 接入的事件；`dispatch` 由外部触发，
+ * 复用**已预热的热连接**（绿色通道）出网，不在插件内做测试性抓取。
  */
 export class IpPoolPlugin extends BasePlugin {
   readonly id = IP_POOL_META.id;

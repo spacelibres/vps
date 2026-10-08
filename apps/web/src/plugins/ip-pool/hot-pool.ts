@@ -49,6 +49,14 @@ export interface HotPoolStats {
   denied: number;
 }
 
+/** 一次「经热连接派发」的结果。 */
+export interface HotDispatchResult {
+  ip: string;
+  status: number;
+  bytes: number;
+  durationMs: number;
+}
+
 interface Slot {
   ip: string;
   family: HostPinRecord["family"];
@@ -157,6 +165,43 @@ export class HotConnectionPool {
       await this.warmOne(slot.ip);
     });
     return this.stats();
+  }
+
+  /**
+   * 用**指定热 IP 的常驻连接**发一次请求（绿色通道）。
+   * 只走已建连的热连接；该 IP 未处于热状态直接报错。
+   * `403/429` 丢弃该连接并退出热池；传输失败同样丢弃、由后台重热。
+   */
+  async dispatch(ip: string, url: string = this.options.warmupUrl): Promise<HotDispatchResult> {
+    const slot = this.slots.get(ip);
+    if (!slot) throw new Error(`热池未登记的 IP：${ip}`);
+    const client = slot.client;
+    if (!client) throw new Error(`IP 无热连接：${ip}`);
+
+    const started = Date.now();
+    try {
+      const res = await client.get(url, { timeout: this.options.timeoutMs });
+      const buf = new Uint8Array(await res.arrayBuffer());
+      const durationMs = Date.now() - started;
+      slot.lastStatus = res.status;
+      if (res.status === this.successStatus) {
+        slot.lastUsedAt = Date.now();
+      } else if (this.deniedStatuses.includes(res.status)) {
+        slot.client = undefined;
+        client.close();
+        slot.state = "denied";
+        this.evictHot(ip);
+      }
+      return { ip, status: res.status, bytes: buf.length, durationMs };
+    } catch (err) {
+      slot.client?.close();
+      slot.client = undefined;
+      this.evictHot(ip);
+      slot.state = "failed";
+      slot.lastError = err instanceof Error ? err.message : String(err);
+      slot.nextReheatAt = Date.now() + this.backoffMs;
+      throw err;
+    }
   }
 
   close(): void {

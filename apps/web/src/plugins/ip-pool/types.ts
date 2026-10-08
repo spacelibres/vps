@@ -221,6 +221,40 @@ export interface PoolPayload {
   pool: PoolCounts & { aggregate: PoolCountryNode[] };
 }
 
+/** `dispatch` / `dispatchStatus` 动作的返回：一次「经热池派发」作业的进度。 */
+export interface DispatchStatus {
+  /** 是否正在运行。 */
+  running: boolean;
+  url: string;
+  /** 本次作业请求总数。 */
+  total: number;
+  /** 已完成数。 */
+  done: number;
+  success: number;
+  failed: number;
+  /** 本次实际参与的热 IP 数。 */
+  hot: number;
+  startedAt: number;
+  finishedAt?: number;
+  elapsedMs?: number;
+  /** 完成速率（个 / 秒）。 */
+  rps?: number;
+  /** 最近一次失败简述。 */
+  lastError?: string;
+}
+
+/** 空作业（尚未派发过）。 */
+export const EMPTY_DISPATCH_STATUS: DispatchStatus = {
+  running: false,
+  url: "",
+  total: 0,
+  done: 0,
+  success: 0,
+  failed: 0,
+  hot: 0,
+  startedAt: 0,
+};
+
 /** SSE `metrics` 事件：请求速率 + 网卡流量 + 热池（约每秒一帧）。 */
 export interface StreamMetrics {
   ts: number;

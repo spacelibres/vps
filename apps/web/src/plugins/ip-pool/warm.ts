@@ -36,6 +36,11 @@ function ensureHotPool(): HotConnectionPool {
   return hotPool;
 }
 
+/** 取（必要时创建）热池实例。 */
+export function getHotPool(): HotConnectionPool {
+  return ensureHotPool();
+}
+
 /** 热池运行状态快照。 */
 export function hotPoolStats(): HotPoolStats | undefined {
   return hotPool?.stats();

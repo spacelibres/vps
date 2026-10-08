@@ -217,8 +217,10 @@ apps/web/src/plugins/ip-pool/
 ├── flight.ts         # 航路合成 + 弹道几何 + 配色（纯函数）
 ├── pulses.ts         # 脉冲骨架 / 激活 / 剪枝（纯函数）
 ├── geo.ts / origin.ts# 地理点与弹道起点（纯逻辑）
-├── hot-pool.ts       # 整池常驻热连接池（只保持连接，不做业务抓取）
-├── warm.ts           # 热池单例 + 面板打开即整池预热
+├── hot-pool.ts       # 整池常驻热连接池（保持连接 + 经热连接派发单次请求）
+├── warm.ts           # 热池单例 + 面板打开即整池预热 + 取池实例
+├── dispatch.ts       # 「经热池派发」作业（外部触发，复用热连接出网）
+├── plan.ts           # 派发调度（纯逻辑，可单测）
 ├── sse.ts            # SSE 实时流（snapshot / pulse / metrics / reset）
 ├── net.ts            # 读 /proc/net/dev 网卡累计流量
 ├── map-layer.ts / bing.ts # Leaflet 脉冲图层 / Bing 底图（回退 CARTO dark）
@@ -273,3 +275,12 @@ apps/web/src/plugins/ip-pool/
   为可视化提供「绿色通道」热状态；`IP_POOL_AUTO_WARM=0` 可关闭。
 - 移除面板上常驻的「全池抓取进度」卡片。
 - 新增 `resetStats`（重置统计）动作：清空所有计数与最近事件并落盘，经 SSE `reset` 广播到各客户端。
+
+### 2026-10-08：新增「经热池派发」（dispatch）
+
+- 外部（本机）可 `POST dispatch { url?, count }` 触发一次作业：服务端复用**已预热的常驻热连接**
+  （绿色通道）对 `url` 发起 `count` 次请求，结果写入统计 + 生成弹道（SSE 推送）；
+  后台异步运行，`GET dispatchStatus` 查进度。
+- 只走热 IP；某 IP 无热连接直接报错（不做冷建连）。每个热 IP 一个 worker。
+- `hot-pool.ts` 重新提供一个「经热连接发一次请求」的原语 `dispatch()`（v0.0.27 删掉的是作业机制，不是这个原语）。
+- 这不是插件内的测试入口：它由**外部**触发，插件本身不自循环发请求。
