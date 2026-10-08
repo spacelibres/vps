@@ -89,15 +89,22 @@ ENV_FILE="$WEB_DIR/.env"
 # ── 1. 环境检查（缺 Node 时按需自动安装）────────────────────
 if ! command -v node >/dev/null 2>&1; then
   if [ "${INSTALL_NODE:-1}" = "1" ] && command -v apt-get >/dev/null 2>&1; then
-    log "未找到 Node.js，通过 NodeSource 安装 Node 22…"
-    command -v curl >/dev/null 2>&1 || { apt-get update -y && apt-get install -y curl ca-certificates; }
-    curl -fsSL https://deb.nodesource.com/setup_22.x | bash -
-    apt-get install -y nodejs
-  else
-    die "未找到 node，请先安装 Node.js ≥ 20"
+    log "未找到 Node.js，尝试用系统包管理器安装（Debian/Ubuntu）…"
+    apt-get update -y >/dev/null 2>&1 || true
+    apt-get install -y nodejs npm >/dev/null 2>&1 || apt-get install -y nodejs || true
   fi
 fi
-command -v node >/dev/null 2>&1 || die "Node.js 安装失败"
+
+# 系统包版本过低 / 不可用时，退回 NodeSource。
+NODE_MAJOR="$(command -v node >/dev/null 2>&1 && node -p 'process.versions.node.split(".")[0]' || echo 0)"
+if [ "$NODE_MAJOR" -lt 20 ] && [ "${INSTALL_NODE:-1}" = "1" ] && command -v apt-get >/dev/null 2>&1; then
+  log "系统 Node 不可用或低于 20，改用 NodeSource 安装 Node 22…"
+  command -v curl >/dev/null 2>&1 || { apt-get update -y >/dev/null 2>&1 || true; apt-get install -y curl ca-certificates; }
+  curl -fsSL https://deb.nodesource.com/setup_22.x | bash -
+  apt-get install -y nodejs
+fi
+
+command -v node >/dev/null 2>&1 || die "未找到 node，请先安装 Node.js ≥ 20"
 NODE_MAJOR="$(node -p 'process.versions.node.split(".")[0]')"
 [ "$NODE_MAJOR" -ge 20 ] || die "Node.js 版本过低（当前 $(node -v)），需要 ≥ 20"
 
