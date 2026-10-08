@@ -5,8 +5,6 @@ import type { FetchRouteOrigin, RoutePulse } from "./types";
 export const IDLE_ROUTE_COLOR = "#64748b";
 /** 失败线路颜色。 */
 export const FAIL_ROUTE_COLOR = "#ef4444";
-/** 热连接线路颜色（绿色通道）。 */
-export const HOT_ROUTE_COLOR = "#22c55e";
 /** 未激活透明度。 */
 export const IDLE_ROUTE_ALPHA = 0.28;
 
@@ -62,7 +60,7 @@ export interface SeedArgs {
   hotIps?: ReadonlySet<string>;
 }
 
-/** 由池子目录预绘全部落点的灰色骨架（同坐标只一条；热连接 IP 标记为绿色通道）。 */
+/** 由池子目录预绘全部落点的灰色骨架（同坐标只一条）。 */
 export function buildSeedPulses(args: SeedArgs): RoutePulse[] {
   const byKey = new Map<string, { lat: number; lng: number; ip: string }>();
   for (const item of args.ips) {
