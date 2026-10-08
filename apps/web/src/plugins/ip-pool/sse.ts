@@ -28,6 +28,7 @@ export function createSseResponse(): Response {
   let poll: ReturnType<typeof setInterval> | null = null;
   let beat: ReturnType<typeof setInterval> | null = null;
   let closed = false;
+  let lastEpoch = store.resetEpoch;
 
   let prevNic = readNicTotals();
   let prevNicAt = Date.now();
@@ -68,11 +69,22 @@ export function createSseResponse(): Response {
         recentAttempts: snap.recentAttempts,
         recentFlightPaths: snap.recentFlightPaths,
         revision: snap.revision,
+        resetEpoch: snap.resetEpoch,
       });
 
       poll = setInterval(() => {
         if (closed) return;
         const s = store.snapshot();
+
+        // 统计被重置：通知客户端清空本地脉冲/采样/日志，并重置去重集合。
+        if (s.resetEpoch !== lastEpoch) {
+          lastEpoch = s.resetEpoch;
+          sentAttempts.clear();
+          sentRequests.clear();
+          sentPaths.clear();
+          write("reset", { resetEpoch: s.resetEpoch, summary: s.summary, revision: s.revision });
+        }
+
         const attempts = s.recentAttempts.filter((a) => !sentAttempts.has(attemptKey(a)));
         const requests = s.recentRequests.filter((r) => !sentRequests.has(r.requestId));
         const flightPaths = s.recentFlightPaths.filter((p) => !sentPaths.has(p.requestId));

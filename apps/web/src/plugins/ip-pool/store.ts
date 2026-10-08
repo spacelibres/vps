@@ -103,6 +103,8 @@ export class IpPoolStore {
   private readonly seenFlightPaths = new Set<string>();
 
   revision = 0;
+  /** 重置次数（递增）；SSE 用它广播 `reset`。 */
+  resetEpoch = 0;
   updatedAt = new Date().toISOString();
 
   private dirty = false;
@@ -381,7 +383,31 @@ export class IpPoolStore {
       recentAttempts: this.recentAttempts,
       recentFlightPaths: this.recentFlightPaths,
       revision: this.revision,
+      resetEpoch: this.resetEpoch,
     };
+  }
+
+  /**
+   * 重置统计：清空所有计数与最近事件，并落盘。
+   * @returns 被清除的 IP 数
+   */
+  reset(): { clearedIps: number } {
+    const clearedIps = this.byIp.size;
+    this.byIp.clear();
+    this.byCountry.clear();
+    this.byRegion.clear();
+    this.recentAttempts = [];
+    this.recentRequests = [];
+    this.recentFlightPaths = [];
+    this.seenAttempts.clear();
+    this.seenRequests.clear();
+    this.seenFlightPaths.clear();
+    this.resetEpoch += 1;
+    this.revision += 1;
+    this.updatedAt = new Date().toISOString();
+    this.markDirty();
+    this.flush();
+    return { clearedIps };
   }
 
   /**

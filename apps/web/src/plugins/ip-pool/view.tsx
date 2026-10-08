@@ -174,10 +174,18 @@ export function IpPoolView(_props: PluginViewProps) {
   const [metrics, setMetrics] = useState<StreamMetrics | null>(null);
   const [windowStat, setWindowStat] = useState<{ count: number; requests: number; bytes: number } | null>(null);
   const [focusIp, setFocusIp] = useState<string | null>(null);
+  const [resetting, setResetting] = useState(false);
   const heartbeatRef = useRef<HTMLCanvasElement | null>(null);
   const heartbeatSamplesRef = useRef<Array<{ ok: number; fail: number }>>([]);
   const tbodyRef = useRef<HTMLTableSectionElement | null>(null);
   const tableWrapRef = useRef<HTMLDivElement | null>(null);
+  // 行 ↔ 地图连线
+  const viewRef = useRef<HTMLDivElement | null>(null);
+  const leaderRef = useRef<SVGPathElement | null>(null);
+  const dotRef = useRef<SVGCircleElement | null>(null);
+  const cardRef = useRef<HTMLDivElement | null>(null);
+  const focusIpRef = useRef<string | null>(null);
+  const layoutFocusRef = useRef<() => void>(() => {});
   const [query, setQuery] = useState("");
   const [countryFilter, setCountryFilter] = useState<string | null>(null);
   const [sortKey, setSortKey] = useState<SortKey>("requests");
@@ -259,6 +267,46 @@ export function IpPoolView(_props: PluginViewProps) {
       setError(err instanceof Error ? err.message : String(err));
     }
   }, [seedFromCatalog]);
+
+  /** 统计被重置（本端或远端触发）：清空本地脉冲/采样/日志后重种骨架。 */
+  const resetLocalView = useCallback(() => {
+    pulsesRef.current.clear();
+    syncLayer();
+    setPulseCount(0);
+    heartbeatSamplesRef.current = [];
+    drawHeartbeat(heartbeatRef.current, heartbeatSamplesRef.current);
+    setLog([]);
+    setMetrics(null);
+    setWindowStat(null);
+    setFocusIp(null);
+    seedFromCatalog();
+    void refreshStats();
+  }, [refreshStats, seedFromCatalog, syncLayer]);
+
+  /** 重置服务端统计（清空计数与最近事件）。 */
+  const doResetStats = useCallback(async () => {
+    if (resetting) return;
+    if (!window.confirm("清空所有统计计数与请求日志？此操作不可撤销。")) return;
+    setResetting(true);
+    try {
+      const res = await fetch(`/api/plugins/${PLUGIN_ID}/actions/resetStats`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ input: {} }),
+      });
+      const json = (await res.json()) as { ok: boolean; error?: { message: string } };
+      if (!json.ok) {
+        setError(json.error?.message ?? "重置失败");
+        return;
+      }
+      resetLocalView();
+      setError(null);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setResetting(false);
+    }
+  }, [resetLocalView, resetting]);
 
   // ── IP 池聚合（仅加载一次）──────────────────────────────
   const loadPool = useCallback(async () => {
@@ -369,9 +417,10 @@ export function IpPoolView(_props: PluginViewProps) {
       if (samples.length > HEARTBEAT_MAX) samples.splice(0, samples.length - HEARTBEAT_MAX);
       drawHeartbeat(heartbeatRef.current, samples);
     });
+    source.addEventListener("reset", () => resetLocalView());
     source.addEventListener("error", () => setConnected(false));
     return () => source.close();
-  }, [applyPulses, mapReady, seedFromCatalog]);
+  }, [applyPulses, mapReady, resetLocalView, seedFromCatalog]);
 
   // ── 初始化地图 + 脉冲图层 + rAF 循环 ─────────────────────
   useEffect(() => {
@@ -415,6 +464,7 @@ export function IpPoolView(_props: PluginViewProps) {
         const changed = pruneDeadPulses(pulsesRef.current, now);
         if (changed > 0) layer.setPulses([...pulsesRef.current.values()]);
         layer._redraw(now);
+        layoutFocusRef.current();
         raf = requestAnimationFrame(tick);
       };
       raf = requestAnimationFrame(tick);
@@ -428,6 +478,72 @@ export function IpPoolView(_props: PluginViewProps) {
       layerRef.current = null;
     };
   }, []);
+
+  // 行焦点：同步到 ref（供 rAF 定位使用）。
+  useEffect(() => {
+    focusIpRef.current = focusIp;
+  }, [focusIp]);
+
+  /** 每帧重算「行 → 地图」引线 + 浮动卡片位置（跟随滚动/缩放）。 */
+  const layoutFocus = useCallback(() => {
+    const view = viewRef.current;
+    const tbody = tbodyRef.current;
+    const map = mapRef.current;
+    const mapEl = mapElRef.current;
+    const card = cardRef.current;
+    const ip = focusIpRef.current;
+
+    const hide = () => {
+      leaderRef.current?.setAttribute("d", "");
+      dotRef.current?.setAttribute("r", "0");
+      if (card) card.style.visibility = "hidden";
+    };
+
+    if (!view || !tbody || !map || !mapEl || !ip) {
+      hide();
+      return;
+    }
+    const entry = catalogRef.current.get(ip);
+    let tr: HTMLElement | null = null;
+    for (const el of tbody.querySelectorAll<HTMLElement>("tr[data-ip]")) {
+      if (el.dataset.ip === ip) {
+        tr = el;
+        break;
+      }
+    }
+    if (!tr || !entry) {
+      hide();
+      return;
+    }
+
+    const v = view.getBoundingClientRect();
+    const t = tr.getBoundingClientRect();
+    const m = mapEl.getBoundingClientRect();
+    const pt = map.latLngToContainerPoint([entry.lat, entry.lng]);
+    const x1 = t.right - v.left;
+    const y1 = t.top - v.top + t.height / 2;
+    const x2 = m.left - v.left + pt.x;
+    const y2 = m.top - v.top + pt.y;
+    // 行已滑出表格视口 → 不画
+    if (y1 < 0 || y1 > v.height) {
+      hide();
+      return;
+    }
+
+    const mx = x1 + Math.min(56, Math.abs(x2 - x1) * 0.4);
+    leaderRef.current?.setAttribute("d", `M ${x1} ${y1} C ${mx} ${y1}, ${mx} ${y2}, ${x2} ${y2}`);
+    dotRef.current?.setAttribute("cx", String(x2));
+    dotRef.current?.setAttribute("cy", String(y2));
+    dotRef.current?.setAttribute("r", "4");
+    if (card) {
+      card.style.visibility = "visible";
+      card.style.left = `${x2}px`;
+      card.style.top = `${y2}px`;
+    }
+  }, []);
+  useEffect(() => {
+    layoutFocusRef.current = layoutFocus;
+  }, [layoutFocus]);
 
   // 行点击 → 地图聚焦：脉冲标记 + 信息卡。
   useEffect(() => {
@@ -549,6 +665,9 @@ export function IpPoolView(_props: PluginViewProps) {
       ? Math.round((summary.totalSuccess / summary.totalRequests) * 1000) / 10
       : null;
 
+  const focusRow = focusIp ? (snapshot?.rows ?? []).find((r) => r.ip === focusIp) : undefined;
+  const focusHot = focusIp ? hotSetRef.current.has(focusIp) : false;
+
   const toggleSort = (key: SortKey) => {
     if (key === sortKey) setSortDir((d) => (d === "asc" ? "desc" : "asc"));
     else {
@@ -568,7 +687,7 @@ export function IpPoolView(_props: PluginViewProps) {
   );
 
   return (
-    <div className="flex h-[calc(100vh-8rem)] min-h-130 gap-4">
+    <div ref={viewRef} className="relative flex h-[calc(100vh-8rem)] min-h-130 gap-4">
       <div className="relative min-w-0 flex-1 overflow-hidden rounded-xl border border-neutral-200 dark:border-neutral-800">
         <div ref={mapElRef} className="absolute inset-0 z-0" />
         <div className="pointer-events-none absolute left-3 top-3 z-10 flex flex-wrap items-center gap-2 rounded-md bg-black/60 px-2.5 py-1.5 text-xs text-white backdrop-blur">
@@ -582,7 +701,20 @@ export function IpPoolView(_props: PluginViewProps) {
       </div>
 
       <aside className="w-104 shrink-0 space-y-4 overflow-y-auto pr-1">
-        <Card title="概览">
+        <Card
+          title="概览"
+          actions={
+            <button
+              type="button"
+              onClick={() => void doResetStats()}
+              disabled={resetting}
+              title="清空所有统计计数与请求日志（会丢失历史，不影响热连接）"
+              className="rounded border border-red-300 px-2 py-0.5 text-xs text-red-600 hover:bg-red-50 disabled:opacity-50 dark:border-red-800 dark:text-red-400 dark:hover:bg-red-950"
+            >
+              {resetting ? "重置中…" : "重置统计"}
+            </button>
+          }
+        >
           {batch && batch.total > 0 && (
             <div className="mb-3 rounded-md border border-neutral-200 px-2 py-1.5 text-xs dark:border-neutral-800">
               <div className="flex items-center gap-2">
@@ -809,6 +941,37 @@ export function IpPoolView(_props: PluginViewProps) {
           )}
         </Card>
       </aside>
+
+      {/* 行 ↔ 地图引线（每帧跟随滚动/缩放重算） */}
+      <svg className="pointer-events-none absolute inset-0 z-20 h-full w-full overflow-visible">
+        <path ref={leaderRef} fill="none" stroke="#3b82f6" strokeWidth={1.5} strokeDasharray="5 4" opacity={0.9} />
+        <circle ref={dotRef} r={0} fill="#3b82f6" opacity={0.9} />
+      </svg>
+      {focusIp && (
+        <div
+          ref={cardRef}
+          className="pointer-events-none absolute z-30 w-52 -translate-x-1/2 -translate-y-[130%] rounded-lg border border-neutral-200 bg-white/95 p-2 text-xs shadow-lg dark:border-neutral-700 dark:bg-neutral-900/95"
+          style={{ visibility: "hidden" }}
+        >
+          <div className="flex items-center gap-1 font-mono">
+            {focusHot && <span className="text-green-500">●</span>}
+            <span className="truncate">{focusIp}</span>
+          </div>
+          <div className="mt-0.5 text-neutral-500">
+            <Flag code={focusRow?.country} />
+            {[focusRow?.country, focusRow?.city].filter(Boolean).join(" · ") || "-"}
+          </div>
+          {focusRow && (
+            <div className="mt-1 grid grid-cols-2 gap-x-2 gap-y-0.5 text-neutral-500">
+              <span>请求 {focusRow.requests}</span>
+              <span>成功 {focusRow.success}</span>
+              <span>失败 {focusRow.failed}</span>
+              <span>{formatBytes(focusRow.totalBytes)}</span>
+              {focusHot && <span className="col-span-2 text-green-600">热连接（绿色通道）</span>}
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }

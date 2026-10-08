@@ -10,6 +10,7 @@
  * | fetch | POST | false | `{ url?, ip?, browser?, noPin?, timeoutMs? }` | `FetchActionResult`（本插件 types） |
  * | fetchBatch | POST | false | `{ url?, ips?, family?, limit?, concurrency?(0=全速), browser?, timeoutMs? }` | `FetchBatchStatus`（本插件 types） |
  * | batchStatus | GET | false | `{}` | `FetchBatchStatus`（本插件 types） |
+ * | resetStats | POST | false | `{}` | `ResetStatsResult`（本插件 types） |
  * | stream | GET | false | `{}` | `Response`（SSE，`raw: true`） |
  *
  * 本插件的 `fetch` / `fetchBatch` 动作会用 node-wreq 真实抓取（浏览器指纹 + 可钉池内 IP），
@@ -30,6 +31,7 @@ import type {
   FetchBatchStatus,
   FetchFlightPath,
   IngestInput,
+  ResetStatsResult,
   StatsSnapshot,
 } from "./types";
 import { ipPoolViews } from "./view";
@@ -350,6 +352,24 @@ export const batchStatusAction = defineAction({
   run: (): Promise<FetchBatchStatus> => Promise.resolve(batchStatus()),
 });
 
+/**
+ * 重置统计：清空所有 IP 计数与最近事件并落盘。
+ * 远程 SSE 客户端通过 `resetEpoch` 变化收到 `reset` 事件后清空本地脉冲/采样/日志。
+ * 热连接属运行时状态，不受影响。
+ */
+export const resetStatsAction = defineAction({
+  id: "resetStats",
+  input: z.object({}),
+  label: "重置统计",
+  method: "POST",
+  needsVps: false,
+  run: (): Promise<ResetStatsResult> => {
+    const store = getStore();
+    const { clearedIps } = store.reset();
+    return Promise.resolve({ clearedIps, resetEpoch: store.resetEpoch });
+  },
+});
+
 /** 出口 C：SSE 实时流。 */
 export const streamAction = defineAction({
   id: "stream",
@@ -370,6 +390,7 @@ export const ipPoolActions: readonly PluginAction[] = [
   fetchAction,
   fetchBatchAction,
   batchStatusAction,
+  resetStatsAction,
   statsAction,
   poolAction,
   snapshotAction,

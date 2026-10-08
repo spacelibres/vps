@@ -203,3 +203,60 @@ describe("IpPoolStore.ingest", () => {
     }
   });
 });
+
+describe("IpPoolStore.reset", () => {
+  it("清空计数与最近事件、递增 resetEpoch 并落盘", () => {
+    const { store, dataDir, dispose } = makeStore();
+    try {
+      store.ingest({
+        attempts: [
+          {
+            requestId: "r1",
+            url: "u",
+            attempt: 1,
+            ip: "1.1.1.1",
+            outcome: "success",
+            durationMs: 20,
+            bytes: 30,
+            at: 1,
+          },
+        ],
+        requests: [
+          {
+            requestId: "r1",
+            url: "u",
+            outcome: "success",
+            attempts: 1,
+            totalDurationMs: 20,
+            finalIp: "1.1.1.1",
+            ipsUsed: ["1.1.1.1"],
+            at: 1,
+          },
+        ],
+      });
+      expect(store.snapshot().rows).toHaveLength(1);
+      const epochBefore = store.resetEpoch;
+
+      const result = store.reset();
+
+      expect(result.clearedIps).toBe(1);
+      expect(store.resetEpoch).toBe(epochBefore + 1);
+      const snap = store.snapshot();
+      expect(snap.resetEpoch).toBe(epochBefore + 1);
+      expect(snap.rows).toHaveLength(0);
+      expect(snap.recentRequests).toHaveLength(0);
+      expect(snap.recentAttempts).toHaveLength(0);
+      expect(snap.recentFlightPaths).toHaveLength(0);
+      expect(snap.summary.totalRequests).toBe(0);
+      expect(snap.summary.totalAttempts).toBe(0);
+
+      // 落盘后重新加载为空。
+      const file = path.join(dataDir, "kh.google.com.yaml");
+      expect(existsSync(file)).toBe(true);
+      const doc = parseYaml(readFileSync(file, "utf8")) as { ips: Record<string, unknown> };
+      expect(Object.keys(doc.ips)).toHaveLength(0);
+    } finally {
+      dispose();
+    }
+  });
+});

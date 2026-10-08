@@ -323,6 +323,8 @@ export interface StreamSnapshot {
   recentAttempts: FetchAttemptRecord[];
   recentFlightPaths: FetchFlightPath[];
   revision: number;
+  /** 重置次数；变化即代表前端应清空本地脉冲/采样/日志。 */
+  resetEpoch: number;
 }
 
 /** SSE `pulse` 事件的形状。 */
@@ -367,4 +369,11 @@ export interface StoreSnapshot {
   recentAttempts: FetchAttemptRecord[];
   recentFlightPaths: FetchFlightPath[];
   revision: number;
+  resetEpoch: number;
+}
+
+/** `resetStats` 动作的返回。 */
+export interface ResetStatsResult {
+  clearedIps: number;
+  resetEpoch: number;
 }
