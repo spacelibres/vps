@@ -666,7 +666,7 @@ export function IpPoolView(_props: PluginViewProps) {
       <div className="relative min-w-0 flex-1 overflow-hidden rounded-xl border border-neutral-200 dark:border-neutral-800">
         <div ref={mapElRef} className="absolute inset-0 z-0" />
         <div className="pointer-events-none absolute left-3 top-3 z-10 flex flex-wrap items-center gap-2 rounded-md bg-black/60 px-2.5 py-1.5 text-xs text-white backdrop-blur">
-          <span className={`inline-block h-2 w-2 rounded-full ${connected ? "bg-emerald-400" : "bg-red-500"}`} />
+          <span className={`inline-block h-2 w-2 rounded-full ${connected ? "bg-sky-400" : "bg-red-500"}`} />
           {connected ? "实时已连接" : "实时未连接"}
           <span className="opacity-70">航线 {pulseCount}</span>
           {metrics && <span className="opacity-70">热池 {metrics.hot}/{metrics.poolTotal}</span>}
@@ -834,7 +834,7 @@ export function IpPoolView(_props: PluginViewProps) {
                         }`}
                       >
                         <td className="px-1 py-1">
-                          {hot && <span className="mr-1 text-green-500">●</span>}
+                          {hot && <span className="mr-1 text-sky-400">●</span>}
                           {row.ip}
                         </td>
                         <td className="px-1 py-1 text-neutral-500">
@@ -894,7 +894,7 @@ export function IpPoolView(_props: PluginViewProps) {
           style={{ visibility: "hidden" }}
         >
           <div className="flex items-center gap-1 font-mono">
-            {focusHot && <span className="text-green-500">●</span>}
+            {focusHot && <span className="text-sky-400">●</span>}
             <span className="truncate">{focusIp}</span>
           </div>
           <div className="mt-0.5 text-neutral-500">
@@ -907,7 +907,7 @@ export function IpPoolView(_props: PluginViewProps) {
               <span>成功 {focusRow.success}</span>
               <span>失败 {focusRow.failed}</span>
               <span>{formatBytes(focusRow.totalBytes)}</span>
-              {focusHot && <span className="col-span-2 text-green-600">热连接（绿色通道）</span>}
+              {focusHot && <span className="col-span-2 text-sky-400">常驻热连接</span>}
             </div>
           )}
         </div>

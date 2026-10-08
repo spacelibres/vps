@@ -56,7 +56,7 @@ export interface SeedArgs {
   ips: Array<{ ip: string; lat: number; lng: number }>;
   timing: ArcTiming;
   arc: ArcOptions;
-  /** 已建立常驻热连接的 IP（绿色通道）。 */
+  /** 已建立常驻热连接的 IP。 */
   hotIps?: ReadonlySet<string>;
 }
 
@@ -106,7 +106,7 @@ export interface ActivateArgs {
   timing: ArcTiming;
   arc: ArcOptions;
   now: number;
-  /** 已建立常驻热连接的 IP（绿色通道）。 */
+  /** 已建立常驻热连接的 IP。 */
   hotIps?: ReadonlySet<string>;
 }
 

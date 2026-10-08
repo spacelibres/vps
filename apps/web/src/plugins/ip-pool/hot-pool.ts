@@ -150,7 +150,7 @@ export class HotConnectionPool {
     return { total: this.slots.size, hot, pending, warming, failed, denied };
   }
 
-  /** 当前已建立热连接的 IP 列表（绿色通道）。 */
+  /** 当前已建立热连接的 IP 列表。 */
   hotIpList(): string[] {
     return [...this.hotIps];
   }
@@ -168,7 +168,7 @@ export class HotConnectionPool {
   }
 
   /**
-   * 用**指定热 IP 的常驻连接**发一次请求（绿色通道）。
+   * 用**指定热 IP 的常驻连接**发一次请求。
    * 只走已建连的热连接；该 IP 未处于热状态直接报错。
    * 单请求超时由 `timeoutMs` 控制（快速失败，不占着 worker）。
    * `403/429` 丢弃该连接并退出热池；传输失败/超时同样丢弃、由后台重热。

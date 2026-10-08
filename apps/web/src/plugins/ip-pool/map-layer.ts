@@ -5,7 +5,7 @@ import type { RoutePulse } from "./types";
 type Leaflet = typeof import("leaflet");
 
 const IDLE_ROUTE_ALPHA = 0.28;
-/** 热连接（h2 常驻绿色通道）骨架透明度。 */
+/** 热连接（h2 常驻）骨架透明度。 */
 const HOT_IDLE_ALPHA = 0.32;
 
 /** 地图上的脉冲航线图层（canvas 自绘，支持世界副本）。 */
@@ -236,7 +236,7 @@ export function createPulseRouteLayer(
       for (const pulse of live) {
         if (pulse.latlngs.length < 2) continue;
 
-        // 热连接（h2 常驻绿色通道）：**本 IP 颜色 + 实线**（不再发虚）；冷连接保持虚线。
+        // 热连接（h2 常驻）：**本 IP 颜色 + 实线**（不再发虚）；冷连接保持虚线。
         // 不因“热”而改颜色 —— 每 IP 自己的颜色始终保留。
         const hot = pulse.hot === true;
         const perIp = pulse.pinnedIp ? ipColor(pulse.pinnedIp) : pulse.color;

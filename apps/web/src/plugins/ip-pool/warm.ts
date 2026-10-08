@@ -6,7 +6,7 @@ import { loadPoolRecords } from "./pool";
  * 进程内单例热连接池（整池常驻热连接）。
  *
  * 只负责「保持连接」：打开面板即在后台预热**整池**，让每个 IP 都建立可复用的
- * keep-alive 连接（绿色通道）；失败的 IP 由热池后台 `maintain` 持续重热。
+ * keep-alive 连接；失败的 IP 由热池后台 `maintain` 持续重热。
  *
  * 不在本插件里发起任何**业务抓取**：抓取派发属于独立的 fetch 插件，本插件只做
  * 池子管理、请求统计与航线可视化。
@@ -46,7 +46,7 @@ export function hotPoolStats(): HotPoolStats | undefined {
   return hotPool?.stats();
 }
 
-/** 当前已建立热连接的 IP 列表（供绿色通道可视化）。 */
+/** 当前已建立热连接的 IP 列表。 */
 export function hotIpList(): string[] {
   return hotPool?.hotIpList() ?? [];
 }

@@ -14,7 +14,7 @@
  *
  * 本插件只做 IP 池管理、请求统计与航线可视化：不主动发起抓取，
  * 事件由外部发送方经 `ingest` / `snapshot` 接入；`dispatch` 由外部触发，
- * 复用**已预热的热连接**出网（绿色通道）。
+ * 复用**已预热的热连接**出网。
  */
 import { z } from "zod";
 import { BasePlugin, defineAction, type PluginAction } from "@/sdk";
@@ -194,7 +194,7 @@ export const snapshotAction = defineAction({
 
 /**
  * 派发：让外部（本机）触发一次「经热池出网」作业。
- * 复用已预热的常驻热连接（绿色通道）逐条请求，结果写统计 + 生成弹道。
+ * 复用已预热的常驻热连接逐条请求，结果写统计 + 生成弹道。
  * 后台异步运行，立即返回进度快照；`count` 为请求总数。
  */
 const dispatchSchema = z.object({
@@ -277,7 +277,7 @@ export const ipPoolActions: readonly PluginAction[] = [
 /**
  * IP 池插件：管理 Google 前端 IP 池、统计请求表现、绘制航线。
  * 只消费外部经 `ingest` / `snapshot` 接入的事件；`dispatch` 由外部触发，
- * 复用**已预热的热连接**（绿色通道）出网，不在插件内做测试性抓取。
+ * 复用**已预热的热连接**出网，不在插件内做测试性抓取。
  */
 export class IpPoolPlugin extends BasePlugin {
   readonly id = IP_POOL_META.id;
