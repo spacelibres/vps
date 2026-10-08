@@ -23,7 +23,7 @@ describe("fetchConfig 派发默认值", () => {
   it("默认并发 1024 / 超时 4000ms，可用环境变量覆盖", () => {
     delete process.env.IP_POOL_DISPATCH_CONCURRENCY;
     delete process.env.IP_POOL_DISPATCH_TIMEOUT_MS;
-    expect(fetchConfig().dispatchConcurrency).toBe(1024);
+    expect(fetchConfig().dispatchConcurrency).toBe(256);
     expect(fetchConfig().dispatchTimeoutMs).toBe(4000);
 
     process.env.IP_POOL_DISPATCH_CONCURRENCY = "1500";

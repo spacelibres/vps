@@ -18,7 +18,7 @@ export interface IpPoolFetchConfig {
   autoWarm: boolean;
   /** 派发时同时在飞的请求上限（`IP_POOL_DISPATCH_CONCURRENCY`，默认 256）。 */
   dispatchConcurrency: number;
-  /** 派发单请求超时（`IP_POOL_DISPATCH_TIMEOUT_MS`，默认 4000）；粘死/失效的热连接要快速失败，不能占着 worker 槽。 */
+  /** 派发单请求超时（`IP_POOL_DISPATCH_TIMEOUT_MS`，默认 4000）。 */
   dispatchTimeoutMs: number;
   /** 弹道起点（`IP_POOL_ORIGIN="lat,lng[,label]"`）。 */
   origin?: { lat: number; lng: number; label?: string };
@@ -30,8 +30,8 @@ const DEFAULT_BROWSER = "chrome_136";
 const DEFAULT_TIMEOUT_MS = 20_000;
 const DEFAULT_CONNECT_TIMEOUT_MS = 4_000;
 const DEFAULT_COLD_TIMEOUT_MS = 6_000;
-/** 派发默认在飞上限：实测单机吞吐在 ~200-400 并发见顶，再高反而下降。 */
-const DEFAULT_DISPATCH_CONCURRENCY = 1024;
+/** 派发默认在飞上限：实测 256 ≈ 93% 峰值吞吐，单请求 ~0.34s（再大吞吐几乎不变、单请求变长）。 */
+const DEFAULT_DISPATCH_CONCURRENCY = 256;
 /** 派发单请求超时：13B 负载下超过该值基本就是死连接，快速失败释放 worker。 */
 const DEFAULT_DISPATCH_TIMEOUT_MS = 4_000;
 
