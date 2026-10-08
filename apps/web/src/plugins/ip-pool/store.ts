@@ -136,7 +136,7 @@ export class IpPoolStore {
     this.dataFile = path.join(options.dataDir, `${options.hostname}.json`);
     this.legacyDataFile = path.join(options.dataDir, `${options.hostname}.yaml`);
     this.origin = options.origin ?? null;
-    this.maxRecentAttempts = options.maxRecentAttempts ?? 400;
+    this.maxRecentAttempts = options.maxRecentAttempts ?? 1000;
     this.maxRecentRequests = options.maxRecentRequests ?? 200;
     this.maxRecentFlightPaths = options.maxRecentFlightPaths ?? 200;
     this.flushIntervalMs = options.flushIntervalMs ?? 15_000;

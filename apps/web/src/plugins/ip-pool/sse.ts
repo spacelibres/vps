@@ -33,6 +33,13 @@ export function createSseResponse(): Response {
   let prevNic = readNicTotals();
   let prevNicAt = Date.now();
 
+  // RPS 用 Store 的**累计计数**求差（不能从 `recentAttempts` 数：那是上限 400 的环形缓冲，
+  // 会把这个数字死死压在 400/秒）。
+  let prevRpsAt = Date.now();
+  let prevTotalRequests = 0;
+  let prevTotalSuccess = 0;
+  let prevTotalFailed = 0;
+
   const stop = () => {
     closed = true;
     if (poll) clearInterval(poll);
@@ -58,6 +65,10 @@ export function createSseResponse(): Response {
       for (const a of snap.recentAttempts) sentAttempts.add(attemptKey(a));
       for (const r of snap.recentRequests) sentRequests.add(r.requestId);
       for (const p of snap.recentFlightPaths) sentPaths.add(p.requestId);
+      prevRpsAt = Date.now();
+      prevTotalRequests = snap.summary.totalRequests;
+      prevTotalSuccess = snap.summary.totalSuccess;
+      prevTotalFailed = snap.summary.totalFailed;
 
       write("hello", { hostname: store.hostname, ts: Date.now() });
       write("snapshot", {
@@ -91,11 +102,19 @@ export function createSseResponse(): Response {
 
         // ── metrics：RPS + 网卡 + 热池 ──
         const now = Date.now();
+        const sum = s.summary;
+        let rps = 0;
         let rpsOk = 0;
         let rpsFail = 0;
-        for (const a of attempts) {
-          if (a.outcome === "success") rpsOk += 1;
-          else rpsFail += 1;
+        const dtRps = (now - prevRpsAt) / 1000;
+        if (dtRps > 0.2) {
+          rps = Math.max(0, Math.round((sum.totalRequests - prevTotalRequests) / dtRps));
+          rpsOk = Math.max(0, Math.round((sum.totalSuccess - prevTotalSuccess) / dtRps));
+          rpsFail = Math.max(0, Math.round((sum.totalFailed - prevTotalFailed) / dtRps));
+          prevTotalRequests = sum.totalRequests;
+          prevTotalSuccess = sum.totalSuccess;
+          prevTotalFailed = sum.totalFailed;
+          prevRpsAt = now;
         }
         let rxBps: number | null = null;
         let txBps: number | null = null;
@@ -113,14 +132,14 @@ export function createSseResponse(): Response {
         }
         const metrics: StreamMetrics = {
           ts: now,
-          rps: rpsOk + rpsFail,
+          rps,
           rpsOk,
           rpsFail,
           rxBps,
           txBps,
           hot: hotIpList().length,
           poolTotal: s.pool.total,
-          totalRequests: s.summary.totalRequests,
+          totalRequests: sum.totalRequests,
         };
         write("metrics", metrics);
 
@@ -128,6 +147,9 @@ export function createSseResponse(): Response {
         for (const a of attempts) sentAttempts.add(attemptKey(a));
         for (const r of requests) sentRequests.add(r.requestId);
         for (const p of flightPaths) sentPaths.add(p.requestId);
+        // 去重集合只用于避开窗口内重复；窗口本身有限，超过阈値就清空（最多重发一小批，无副作用）。
+        if (sentAttempts.size > 20_000) sentAttempts.clear();
+        if (sentRequests.size > 20_000) sentRequests.clear();
         write("pulse", {
           revision: s.revision,
           summary: s.summary,
