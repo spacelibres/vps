@@ -1,0 +1,9 @@
+# VPS 凭据配置模板。
+# 复制为 vps.yaml 并填入真实值（vps.yaml 已被 .gitignore 忽略，不会进版本库）。
+vps:
+  - veid: "2166457"
+    api_key: "private_xxxxxxxxxxxxxxxxxxxxxxxx"
+    alias: "tile0.example.com"
+  - veid: "2166450"
+    api_key: "private_xxxxxxxxxxxxxxxxxxxxxxxx"
+    alias: "tile1.example.com"

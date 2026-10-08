@@ -1,0 +1,14 @@
+{
+  "name": "vps-panel-root",
+  "version": "0.0.1",
+  "private": true,
+  "packageManager": "pnpm@11.22.0",
+  "scripts": {
+    "setup": "pnpm --dir apps/web install",
+    "dev": "pnpm --dir apps/web dev",
+    "build": "pnpm --dir apps/web build",
+    "start": "pnpm --dir apps/web start",
+    "typecheck": "pnpm --dir apps/web typecheck",
+    "test": "pnpm --dir apps/web test"
+  }
+}

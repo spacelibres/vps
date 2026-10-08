@@ -1,0 +1,7 @@
+# 本目录的 .env / .env.example 会被编辑器当作 shell 脚本检查（ShellCheck）。
+# 它们是 dotenv 文件而非脚本：变量由应用通过 process.env 读取，
+# 因此在文件内「看似未使用」。这里关掉相关提示，避免噪音。
+#
+# SC2034: 变量「appears unused」
+# SC2148: 缺少 shebang / shell 指令
+disable=SC2034,SC2148

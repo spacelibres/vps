@@ -1,0 +1,11 @@
+{
+  "lsp": {
+    "typescript-language-server": {
+      "settings": {
+        "typescript": {
+          "tsdk": "apps/web/node_modules/typescript/lib"
+        }
+      }
+    }
+  }
+}

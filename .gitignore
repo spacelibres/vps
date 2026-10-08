@@ -1,0 +1,26 @@
+# dependencies
+node_modules/
+.pnpm-store/
+
+# next.js
+.next/
+out/
+next-env.d.ts
+
+# build output
+dist/
+
+# env & secrets
+.env
+.env.*
+!.env.example
+apps/web/config/vps.yaml
+
+# 插件运行时数据（IP 池统计落盘等）
+apps/web/data/
+
+# misc
+*.log
+.DS_Store
+coverage/
+*.tsbuildinfo
