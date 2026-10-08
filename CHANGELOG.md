@@ -7,6 +7,23 @@
 
 ## [未发布]
 
+## [0.0.22] - 2026-10-08
+
+### 新增
+
+- `ip-pool` **每 IP 常驻热连接（热池）**——移植 `GeoClaw/src/fetch/HotConnectionPool`：
+  - `hot-pool.ts`：用 `createClient({ dns.hosts, connectionGroup: ip, poolIdleTimeout,
+    poolMaxIdlePerHost })` 为**每个 IP** 建一条可复用 `Client`，**握手只做一次**，后续请求复用
+    keep-alive；仅 HTTP 200 入热池；传输失败移出热池 + 退避后台重热；`403/429` 入冷池；
+    空闲接近窗口时保活续命。
+  - `hot-picker.ts`：公平选路 `pickFairHotIp`（带 `warmSlack` 时优先复用最近连接，+ 单测）。
+  - 批量抓取改为走热池：重复跑同一批 IP 时握手开销基本消失；进度快照新增
+    `hotReused` / `coldOpened` / `pool`（热池 hot/total），视图同步展示。
+
+### 说明
+
+- 第一遍仍是「冷建连」（每个 IP 一次握手），**第二遍起大量热复用**——这才是该设计的价值。
+
 ## [0.0.21] - 2026-10-08
 
 ### 变更

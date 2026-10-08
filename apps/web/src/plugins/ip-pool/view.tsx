@@ -453,6 +453,17 @@ export function IpPoolView(_props: PluginViewProps) {
                   style={{ width: `${Math.round((batch.done / batch.total) * 100)}%` }}
                 />
               </div>
+              {(batch.pool || batch.hotReused !== undefined) && (
+                <div className="mt-1 flex items-center gap-3 text-neutral-500">
+                  <span>热复用 {batch.hotReused ?? 0}</span>
+                  <span>新建 {batch.coldOpened ?? 0}</span>
+                  {batch.pool && (
+                    <span className="ml-auto">
+                      热池 {batch.pool.hot}/{batch.pool.total}
+                    </span>
+                  )}
+                </div>
+              )}
             </div>
           )}
           {error && (

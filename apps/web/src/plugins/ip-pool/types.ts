@@ -236,6 +236,16 @@ export interface FetchActionResult {
   recorded: boolean;
 }
 
+/** 热连接池状态快照（客户端安全的结构化类型）。 */
+export interface PoolStats {
+  total: number;
+  hot: number;
+  pending: number;
+  warming: number;
+  failed: number;
+  denied: number;
+}
+
 /** `fetchBatch` / `batchStatus` 动作的返回：一次全池（或指定范围）抓取作业的进度。 */
 export interface FetchBatchStatus {
   /** 是否正在运行。 */
@@ -247,6 +257,12 @@ export interface FetchBatchStatus {
   success: number;
   httpError: number;
   transportError: number;
+  /** 复用热连接完成的数量。 */
+  hotReused?: number;
+  /** 本次现场建连完成的数量。 */
+  coldOpened?: number;
+  /** 热池状态快照。 */
+  pool?: PoolStats;
   /** 实际并发上限。 */
   concurrency: number;
   /** 已运行时长（毫秒）。 */
@@ -268,6 +284,8 @@ export const EMPTY_BATCH_STATUS: FetchBatchStatus = {
   success: 0,
   httpError: 0,
   transportError: 0,
+  hotReused: 0,
+  coldOpened: 0,
   concurrency: 0,
   elapsedMs: 0,
   ratePerSec: 0,

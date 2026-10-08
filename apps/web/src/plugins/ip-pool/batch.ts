@@ -1,12 +1,14 @@
 import { fetchConfig } from "./config";
 import { mapPool } from "./concurrency";
-import { fetchOnce } from "./fetch";
+import { HotConnectionPool } from "./hot-pool";
 import { loadPoolRecords } from "./pool";
 import { getStore } from "./store";
 import { EMPTY_BATCH_STATUS, type FetchBatchStatus, type HostPinFamily, type HostPinRecord } from "./types";
 
 export { mapPool };
 
+/** 热池运维（预热/重热/保活）并发；业务下载由任务并发（`concurrency`）决定。 */
+const WARM_CONCURRENCY = 200;
 
 export interface FetchBatchOptions {
   url?: string;
@@ -25,12 +27,12 @@ const DEFAULT_CONCURRENCY = 0;
 
 let job: FetchBatchStatus = { ...EMPTY_BATCH_STATUS };
 
-/** 当前（或最近一次）批量抓取作业的进度快照（附加实时吞吐指标）。 */
+/** 当前（或最近一次）批量抓取作业的进度快照（附加实时吞吐与热池指标）。 */
 export function batchStatus(): FetchBatchStatus {
   const now = job.running ? Date.now() : (job.finishedAt ?? Date.now());
   const elapsedMs = job.startedAt ? Math.max(0, now - job.startedAt) : 0;
   const ratePerSec = elapsedMs > 0 ? Math.round((job.done / elapsedMs) * 1000 * 10) / 10 : 0;
-  return { ...job, elapsedMs, ratePerSec };
+  return { ...job, elapsedMs, ratePerSec, pool: hotPool?.stats() };
 }
 
 export function isBatchRunning(): boolean {
@@ -50,10 +52,33 @@ export function resolveBatchTargets(options: FetchBatchOptions): HostPinRecord[]
   return records;
 }
 
+// ── 进程内单例热池（跨批次复用连接）──────────────────────
+let hotPool: HotConnectionPool | null = null;
+
+function ensureHotPool(cfg: ReturnType<typeof fetchConfig>, url: string, browser: string, timeoutMs: number) {
+  if (!hotPool) {
+    hotPool = new HotConnectionPool({
+      hostname: cfg.hostname,
+      warmupUrl: url,
+      browser,
+      proxy: cfg.proxy,
+      timeoutMs,
+      warmConcurrency: WARM_CONCURRENCY,
+    });
+    hotPool.startBackground();
+  }
+  return hotPool;
+}
+
+/** 供其它动作（如单次 `fetch`）复用热池。 */
+export function hotPoolStats(): FetchBatchStatus["pool"] {
+  return hotPool?.stats();
+}
+
 /**
  * 启动一次批量抓取（**后台运行**，立即返回进度快照）。
- * 每个 IP 钉住后抓取一次，结果逐条写入 Store（SSE 实时推送弹道）。
- * 已有作业在跑时直接返回其快照（不重复启动）。
+ * 每个 IP 走自己的**常驻热连接**（首次建连，之后复用 keep-alive），
+ * 结果逐条写入 Store（SSE 实时推送弹道）。
  */
 export function startBatch(options: FetchBatchOptions): FetchBatchStatus {
   if (job.running) return job;
@@ -63,12 +88,18 @@ export function startBatch(options: FetchBatchOptions): FetchBatchStatus {
   // `concurrency <= 0`（默认）→ 全速：不限并发，一次性铺开全部目标。
   const requested = Math.floor(options.concurrency ?? DEFAULT_CONCURRENCY) || DEFAULT_CONCURRENCY;
   const concurrency =
-    requested <= 0
-      ? targets.length
-      : Math.min(requested, MAX_CONCURRENCY, targets.length);
+    requested <= 0 ? targets.length : Math.min(requested, MAX_CONCURRENCY, targets.length);
   const url = options.url ?? cfg.targetUrl;
   const browser = options.browser ?? cfg.browser;
   const timeoutMs = options.timeoutMs ?? cfg.timeoutMs;
+
+  // 登记**全池**（不只是本次目标），让后续批次复用已建立的连接。
+  const pool = ensureHotPool(cfg, url, browser, timeoutMs);
+  try {
+    pool.register(loadPoolRecords(cfg.poolFile));
+  } catch {
+    pool.register(targets);
+  }
 
   job = {
     running: true,
@@ -77,13 +108,17 @@ export function startBatch(options: FetchBatchOptions): FetchBatchStatus {
     success: 0,
     httpError: 0,
     transportError: 0,
+    hotReused: 0,
+    coldOpened: 0,
     concurrency,
+    pool: pool.stats(),
     startedAt: Date.now(),
   };
 
-  void runBatch({ targets, url, browser, timeoutMs, concurrency }).finally(() => {
+  void runBatch({ targets, url, timeoutMs, concurrency, pool }).finally(() => {
     job.running = false;
     job.finishedAt = Date.now();
+    job.pool = pool.stats();
     getStore().flush();
   });
 
@@ -93,12 +128,12 @@ export function startBatch(options: FetchBatchOptions): FetchBatchStatus {
 interface RunBatchArgs {
   targets: readonly HostPinRecord[];
   url: string;
-  browser: string;
   timeoutMs: number;
   concurrency: number;
+  pool: HotConnectionPool;
 }
 
-async function runBatch({ targets, url, browser, timeoutMs, concurrency }: RunBatchArgs): Promise<void> {
+async function runBatch({ targets, url, timeoutMs, concurrency, pool }: RunBatchArgs): Promise<void> {
   const cfg = fetchConfig();
   const store = getStore();
   let seq = 0;
@@ -113,17 +148,13 @@ async function runBatch({ targets, url, browser, timeoutMs, concurrency }: RunBa
     let error: string | undefined;
 
     try {
-      const result = await fetchOnce({
-        url,
-        proxy: cfg.proxy,
-        browser,
-        timeoutMs,
-        pin: { hostname: cfg.hostname, ip: record.ip },
-      });
-      outcome = result.ok ? "success" : "http_error";
+      const result = await pool.probe(record.ip, url);
       status = result.status;
       bytes = result.bytes;
       durationMs = result.durationMs;
+      outcome = result.status === 200 ? "success" : "http_error";
+      if (result.via === "hot") job.hotReused = (job.hotReused ?? 0) + 1;
+      else job.coldOpened = (job.coldOpened ?? 0) + 1;
     } catch (err) {
       error = err instanceof Error ? err.message : String(err);
     }
