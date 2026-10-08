@@ -8,13 +8,16 @@
  * | pool | GET | false | `{}` | `PoolPayload`（本插件 types） |
  * | snapshot | POST | false | `{}` | `{ events, rowsMerged, revision }` |
  * | fetch | POST | false | `{ url?, ip?, browser?, noPin?, timeoutMs? }` | `FetchActionResult`（本插件 types） |
+ * | fetchBatch | POST | false | `{ url?, ips?, family?, limit?, concurrency?, browser?, timeoutMs? }` | `FetchBatchStatus`（本插件 types） |
+ * | batchStatus | GET | false | `{}` | `FetchBatchStatus`（本插件 types） |
  * | stream | GET | false | `{}` | `Response`（SSE，`raw: true`） |
  *
- * 本插件的 `fetch` 动作会用 node-wreq 真实抓取一次（浏览器指纹 + 可钉池内 IP），
+ * 本插件的 `fetch` / `fetchBatch` 动作会用 node-wreq 真实抓取（浏览器指纹 + 可钉池内 IP），
  * 结果写入统计即成为弹道数据源；其余动作只消费事件、不发起请求。
  */
 import { z } from "zod";
 import { BasePlugin, defineAction, type PluginAction } from "@/sdk";
+import { batchStatus, isBatchRunning, startBatch } from "./batch";
 import { fetchConfig } from "./config";
 import { IP_POOL_META } from "./descriptor";
 import { fetchOnce, type PinnedFetchResult } from "./fetch";
@@ -22,7 +25,13 @@ import { getHostPinPool } from "./host-pin";
 import { applyFileSnapshot, snapshotFilesFromEnv } from "./snapshot";
 import { createSseResponse } from "./sse";
 import { getStore } from "./store";
-import type { FetchActionResult, FetchFlightPath, IngestInput, StatsSnapshot } from "./types";
+import type {
+  FetchActionResult,
+  FetchBatchStatus,
+  FetchFlightPath,
+  IngestInput,
+  StatsSnapshot,
+} from "./types";
 import { ipPoolViews } from "./view";
 
 const attemptSchema = z.object({
@@ -292,6 +301,53 @@ export const fetchAction = defineAction({
   },
 });
 
+const fetchBatchSchema = z.object({
+  url: z.string().optional(),
+  ips: z.array(z.string()).optional(),
+  family: z.enum(["all", "ipv4", "ipv6"]).default("all"),
+  limit: z.number().int().positive().max(5000).optional(),
+  concurrency: z.number().int().min(1).max(64).default(16),
+  browser: z.string().optional(),
+  timeoutMs: z.number().int().positive().max(120_000).optional(),
+});
+
+/**
+ * 批量抓取：对全池（或指定 IP / 地址族 / 限量）逐 IP 钉住后抓取一次。
+ * **后台运行**，立即返回作业进度；逐条结果写入 Store，经 SSE 实时推送弹道。
+ */
+export const fetchBatchAction = defineAction({
+  id: "fetchBatch",
+  label: "全池抓取",
+  description: "对 IP 池内每个 IP 钉住后各抓取一次（有界并发，后台运行）",
+  method: "POST",
+  needsVps: false,
+  input: fetchBatchSchema,
+  run: (_ctx, input): Promise<FetchBatchStatus> => {
+    if (isBatchRunning()) return Promise.resolve(batchStatus());
+    return Promise.resolve(
+      startBatch({
+        url: input.url,
+        ips: input.ips,
+        family: input.family,
+        limit: input.limit,
+        concurrency: input.concurrency,
+        browser: input.browser,
+        timeoutMs: input.timeoutMs,
+      }),
+    );
+  },
+});
+
+/** 出口：批量抓取作业进度。 */
+export const batchStatusAction = defineAction({
+  id: "batchStatus",
+  input: z.object({}),
+  label: "全池抓取进度",
+  method: "GET",
+  needsVps: false,
+  run: (): Promise<FetchBatchStatus> => Promise.resolve(batchStatus()),
+});
+
 /** 出口 C：SSE 实时流。 */
 export const streamAction = defineAction({
   id: "stream",
@@ -310,6 +366,8 @@ export const streamAction = defineAction({
 export const ipPoolActions: readonly PluginAction[] = [
   ingestAction,
   fetchAction,
+  fetchBatchAction,
+  batchStatusAction,
   statsAction,
   poolAction,
   snapshotAction,
@@ -318,7 +376,8 @@ export const ipPoolActions: readonly PluginAction[] = [
 
 /**
  * IP 池插件：管理 Google 前端 IP 池、统计真实请求表现、绘制弹道航线。
- * 本插件**不发起任何请求**，只消费外部推送的真实事件。
+ * `fetch` / `fetchBatch` 用 node-wreq 按池内 IP 发起真实抓取（指纹 + 钉 IP + 代理），
+ * 其余动作只消费已落盘的真实事件，不额外发起请求。
  */
 export class IpPoolPlugin extends BasePlugin {
   readonly id = IP_POOL_META.id;

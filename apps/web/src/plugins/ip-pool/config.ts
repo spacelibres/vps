@@ -1,3 +1,4 @@
+import { parseOrigin } from "./origin";
 import { resolvePoolFile } from "./store";
 
 /** 抓取相关配置（全部来自环境变量，含合理默认值）。 */
@@ -18,13 +19,8 @@ const DEFAULT_TARGET_URL = "https://kh.google.com/rt/earth/PlanetoidMetadata";
 const DEFAULT_BROWSER = "chrome_136";
 const DEFAULT_TIMEOUT_MS = 20_000;
 
-function parseOrigin(raw: string | undefined): IpPoolFetchConfig["origin"] {
-  if (!raw) return undefined;
-  const [latRaw, lngRaw, label] = raw.split(",");
-  const lat = Number(latRaw);
-  const lng = Number(lngRaw);
-  if (!Number.isFinite(lat) || !Number.isFinite(lng)) return undefined;
-  return { lat, lng, label: label?.trim() || undefined };
+function parseOriginEnv(raw: string | undefined): IpPoolFetchConfig["origin"] {
+  return parseOrigin(raw);
 }
 
 /** 读取环境变量得到抓取配置。 */
@@ -39,7 +35,7 @@ export function fetchConfig(): IpPoolFetchConfig {
       process.env.HTTPS_PROXY ??
       process.env.https_proxy,
     timeoutMs: Number(process.env.IP_POOL_TIMEOUT_MS ?? DEFAULT_TIMEOUT_MS),
-    origin: parseOrigin(process.env.IP_POOL_ORIGIN),
+    origin: parseOriginEnv(process.env.IP_POOL_ORIGIN),
     poolFile: resolvePoolFile(),
   };
 }

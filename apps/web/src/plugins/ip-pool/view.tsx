@@ -16,6 +16,7 @@ import {
 } from "./pulses";
 import type {
   FetchActionResult,
+  FetchBatchStatus,
   FetchRequestRecord,
   FetchRouteOrigin,
   IpFetchStatRow,
@@ -33,10 +34,11 @@ import "leaflet/dist/leaflet.css";
 const PLUGIN_ID = "ip-pool";
 const MAX_TABLE_ROWS = 200;
 const ARC_OPTIONS = {
-  earthRadiusKm: 6371,
   leoAltitudeMinKm: 12,
   leoAltitudeMaxKm: 48,
-  orbitDisplayExaggeration: 2.5,
+  bowFactor: 0.16,
+  maxBowDeg: 26,
+  maxAbsLat: 56,
 } as const;
 
 type SortKey = "requests" | "success" | "failed" | "totalBytes" | "avgDurationMs" | "ip";
@@ -106,6 +108,7 @@ export function IpPoolView(_props: PluginViewProps) {
   const [loading, setLoading] = useState(false);
   const [fetching, setFetching] = useState(false);
   const [lastFetch, setLastFetch] = useState<FetchActionResult | null>(null);
+  const [batch, setBatch] = useState<FetchBatchStatus | null>(null);
   const [query, setQuery] = useState("");
   const [countryFilter, setCountryFilter] = useState<string | null>(null);
   const [sortKey, setSortKey] = useState<SortKey>("requests");
@@ -132,6 +135,7 @@ export function IpPoolView(_props: PluginViewProps) {
       if (!pulsesRef.current.has(pulse.id)) pulsesRef.current.set(pulse.id, pulse);
     }
     syncLayer();
+    setPulseCount(pulsesRef.current.size);
     if (!didFitRef.current && mapRef.current) {
       const bounds = layerRef.current?.getBounds();
       if (bounds?.isValid()) {
@@ -206,6 +210,49 @@ export function IpPoolView(_props: PluginViewProps) {
       setLoading(false);
     }
   }, [seedFromCatalog]);
+
+  // ── 全池抓取（后台作业，进度轮询） ──────────────────────
+  const runBatch = useCallback(async () => {
+    setError(null);
+    try {
+      const res = await fetch(`/api/plugins/${PLUGIN_ID}/actions/fetchBatch`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ input: {} }),
+        cache: "no-store",
+      });
+      const json = (await res.json()) as
+        | { ok: true; data: FetchBatchStatus }
+        | { ok: false; error: { message: string } };
+      if (!json.ok) {
+        setError(json.error.message);
+        return;
+      }
+      setBatch(json.data);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!batch?.running) return;
+    let stopped = false;
+    const id = setInterval(async () => {
+      try {
+        const res = await fetch(`/api/plugins/${PLUGIN_ID}/actions/batchStatus`, { cache: "no-store" });
+        const json = (await res.json()) as { ok: boolean; data?: FetchBatchStatus };
+        if (stopped || !json.ok || !json.data) return;
+        setBatch(json.data);
+        if (!json.data.running) void loadStats();
+      } catch {
+        // 轮询失败忽略；下轮重试
+      }
+    }, 1000);
+    return () => {
+      stopped = true;
+      clearInterval(id);
+    };
+  }, [batch?.running, loadStats]);
 
   useEffect(() => {
     void loadStats();
@@ -425,6 +472,9 @@ export function IpPoolView(_props: PluginViewProps) {
           title="概览"
           actions={
             <div className="flex gap-2">
+              <Button variant="ghost" onClick={() => void runBatch()} disabled={batch?.running === true}>
+                {batch?.running ? "抓取中…" : "全池抓取"}
+              </Button>
               <Button onClick={() => void runFetch()} disabled={fetching}>
                 {fetching ? <Spinner label="抓取中" /> : "抓取一次"}
               </Button>
@@ -434,6 +484,27 @@ export function IpPoolView(_props: PluginViewProps) {
             </div>
           }
         >
+          {batch && batch.total > 0 && (
+            <div className="mb-3 rounded-md border border-neutral-200 px-2 py-1.5 text-xs dark:border-neutral-800">
+              <div className="flex items-center gap-2">
+                <StatusBadge tone={batch.running ? "warning" : "success"}>
+                  {batch.running ? "全池抓取中" : "全池抓取完成"}
+                </StatusBadge>
+                <span>
+                  {batch.done} / {batch.total}
+                </span>
+                <span className="ml-auto text-neutral-500">
+                  成功 {batch.success} · HTTP {batch.httpError} · 传输 {batch.transportError}
+                </span>
+              </div>
+              <div className="mt-1 h-1 w-full overflow-hidden rounded bg-neutral-200 dark:bg-neutral-800">
+                <div
+                  className="h-full bg-blue-500 transition-all"
+                  style={{ width: `${Math.round((batch.done / batch.total) * 100)}%` }}
+                />
+              </div>
+            </div>
+          )}
           {error && (
             <div className="mb-3">
               <Alert tone="error">{error}</Alert>

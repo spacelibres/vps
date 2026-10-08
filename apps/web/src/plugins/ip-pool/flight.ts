@@ -7,8 +7,6 @@ import type {
   FlightWaypoint,
 } from "./types";
 
-const RAD2DEG = 180 / Math.PI;
-const DEG2RAD = Math.PI / 180;
 const GOLDEN_ANGLE_DEG = 137.508;
 
 /** FNV-1a 32 位哈希。 */
@@ -24,9 +22,6 @@ export function hashId(input: string): number {
 /**
  * 由 IP（或任意键）生成**稳定且互不相同**的颜色。
  * 借鉴 GeoClaw `viz/flight-map/arc.js` 的 `visualFromIp`：黄金角散列 + 三档亮度。
- */
-/**
- * 与 `arc.js` 的 `visualFromIp` 对齐：稳定颜色 + 显示用轨道高度（km）。
  */
 export function ipVisual(
   ip: string,
@@ -51,17 +46,28 @@ export function ipColor(key: string): string {
 }
 
 export interface ArcDisplayOptions {
-  earthRadiusKm?: number;
-  altitudeKm?: number;
-  orbitDisplayExaggeration?: number;
+  /** 拱高相对弦长的系数。 */
+  bowFactor?: number;
+  /** 拱高上限（度）。 */
+  maxBowDeg?: number;
+  /** 纬度软上限（度）：压缩拱高以保证最凸点纬度不超过该值，避免越过极圈。 */
+  maxAbsLat?: number;
+  /** 等分步数；缺省按弦长自适应。 */
   steps?: number;
   minSteps?: number;
   maxSteps?: number;
 }
 
+const DEFAULT_BOW_FACTOR = 0.16;
+const DEFAULT_MAX_BOW_DEG = 26;
+const DEFAULT_MAX_ABS_LAT = 56;
+
 /**
- * 生成地图上的弹道弧线点序列（大圆 + 拱高）。
- * 借鉴 GeoClaw `arc.js` 的 `mapDisplayArc`。
+ * 生成地图上的弹道弧：**等距圆柱（经纬度平面）下的二次拱形**。
+ *
+ * 不做大圆：沿**最短经度差**线性插值，再沿弦的垂线叠加一个有限拱高，并受 `maxAbsLat`
+ * 软约束。这样弧线不会被 Mercator 的高纬拉伸推到极圈之外，视觉上更接近航班轨迹的优美弧线。
+ * 端点精确落在起止点上。
  * @returns `[lng, lat][]`
  */
 export function mapDisplayArc(
@@ -69,53 +75,56 @@ export function mapDisplayArc(
   to: GeoPoint,
   options: ArcDisplayOptions = {},
 ): [number, number][] {
-  const R = options.earthRadiusKm ?? 6371;
-  const altitudeKm = options.altitudeKm ?? 30;
-  const exag = options.orbitDisplayExaggeration ?? 2.5;
-  const theta = angularDistanceRad(from, to);
-  const bowPeak = leoOrbitalBowDeg(theta, altitudeKm, R) * exag;
+  const fromLng = from.lng;
+  const toLng = unwrapLng(fromLng, to.lng);
+  const dx = toLng - fromLng;
+  const dy = to.lat - from.lat;
+  const chord = Math.hypot(dx, dy);
+  if (chord < 1e-6) return [[fromLng, from.lat]];
+
   const minSteps = options.minSteps ?? 16;
   const maxSteps = options.maxSteps ?? 48;
   const steps =
     options.steps ??
-    Math.max(minSteps, Math.min(maxSteps, Math.ceil(Math.max(theta * RAD2DEG, 1) / 2.5)));
+    Math.max(minSteps, Math.min(maxSteps, Math.ceil(Math.max(chord, 1) / 2.5)));
 
-  const ground = greatCircleArc(from, to, steps);
-  const unwrapped: Array<[number, number]> = [];
-  let prevLng: number | null = null;
-  for (const [lng, lat] of ground) {
-    const ulng: number = prevLng === null ? lng : unwrapLng(prevLng, lng);
-    unwrapped.push([ulng, lat]);
-    prevLng = ulng;
-  }
-  if (unwrapped.length < 2) return unwrapped;
-
-  const start = unwrapped[0]!;
-  const end = unwrapped[unwrapped.length - 1]!;
-  const chordDx = end[0] - start[0];
-  const chordDy = end[1] - start[1];
-  const chordLen = Math.hypot(chordDx, chordDy) || 1;
-  let nx = -chordDy / chordLen;
-  let ny = chordDx / chordLen;
-  const mid = unwrapped[Math.floor(unwrapped.length / 2)]!;
-  const chordMidLng = (start[0] + end[0]) / 2;
-  const chordMidLat = (start[1] + end[1]) / 2;
-  if (nx * (mid[0] - chordMidLng) + ny * (mid[1] - chordMidLat) < 0) {
+  // 弦的单位垂线（+90°），再取向所半球（北半球向北拱、南半球向南拱），形成连贯的彩虹弧。
+  let nx = -dy / chord;
+  let ny = dx / chord;
+  const midLat = (from.lat + to.lat) / 2;
+  const poleSign = midLat >= 0 ? 1 : -1;
+  if (ny * poleSign < 0) {
     nx = -nx;
     ny = -ny;
   }
 
-  const n = unwrapped.length;
+  const bowFactor = options.bowFactor ?? DEFAULT_BOW_FACTOR;
+  const maxBowDeg = options.maxBowDeg ?? DEFAULT_MAX_BOW_DEG;
+  const maxAbsLat = options.maxAbsLat ?? DEFAULT_MAX_ABS_LAT;
+
+  let bow = Math.min(maxBowDeg, chord * bowFactor);
+  // 纬度软上限：二分压缩拱高，保证拱起极值点不越过 ±maxAbsLat（端点本身不受限）。
+  let lo = 0;
+  let hi = bow;
+  for (let k = 0; k < 40; k++) {
+    const mid = (lo + hi) / 2;
+    const extreme = arcBulgeExtreme(from.lat, dy, ny, mid);
+    const ok = ny >= 0 ? extreme <= maxAbsLat : extreme >= -maxAbsLat;
+    if (ok) lo = mid;
+    else hi = mid;
+  }
+  bow = lo;
+
   const points: Array<[number, number]> = [];
-  for (let i = 0; i < n; i++) {
-    const t = n === 1 ? 0 : i / (n - 1);
-    const elev = bowPeak * (4 * t * (1 - t));
-    const [lng, lat] = unwrapped[i]!;
-    points.push([lng + nx * elev, lat + ny * elev]);
+  for (let i = 0; i <= steps; i++) {
+    const t = i / steps;
+    const elev = bow * (4 * t * (1 - t));
+    points.push([fromLng + dx * t + nx * elev, from.lat + dy * t + ny * elev]);
   }
   return points;
 }
 
+/** 把 `lng2` 解开到与 `lng1` 最接近的经度（最短跨纬差，±180 内）。 */
 function unwrapLng(lng1: number, lng2: number): number {
   let dLon = lng2 - lng1;
   if (dLon > 180) dLon -= 360;
@@ -123,67 +132,19 @@ function unwrapLng(lng1: number, lng2: number): number {
   return lng1 + dLon;
 }
 
-function angularDistanceRad(a: GeoPoint, b: GeoPoint): number {
-  const phi1 = a.lat * DEG2RAD;
-  const phi2 = b.lat * DEG2RAD;
-  let dLambda = (b.lng - a.lng) * DEG2RAD;
-  if (dLambda > Math.PI) dLambda -= 2 * Math.PI;
-  if (dLambda < -Math.PI) dLambda += 2 * Math.PI;
-  const cosDelta = clamp(
-    Math.sin(phi1) * Math.sin(phi2) + Math.cos(phi1) * Math.cos(phi2) * Math.cos(dLambda),
-    -1,
-    1,
-  );
-  return Math.acos(cosDelta);
-}
-
-function leoOrbitalBowDeg(thetaRad: number, altitudeKm: number, earthRadiusKm = 6371): number {
-  const half = thetaRad / 2;
-  if (half < 1e-9) return 0;
-  const h = Math.max(0, altitudeKm);
-  const R = Math.max(1, earthRadiusKm);
-  const deltaSagitta = h * (1 - Math.cos(half));
-  const halfChord = R * Math.sin(half);
-  return Math.atan2(deltaSagitta, Math.max(halfChord, 1e-6)) * RAD2DEG;
-}
-
-function greatCircleArc(from: GeoPoint, to: GeoPoint, steps: number): Array<[number, number]> {
-  const start = latLngToUnit(from.lat, from.lng);
-  const end = latLngToUnit(to.lat, to.lng);
-  const dot = clamp(start[0] * end[0] + start[1] * end[1] + start[2] * end[2], -1, 1);
-  const omega = Math.acos(dot);
-  if (omega < 1e-10) return [unitToLngLat(start)];
-  const sinOmega = Math.sin(omega);
-  const points: Array<[number, number]> = [];
-  for (let i = 0; i <= steps; i++) {
-    const t = i / steps;
-    const a = Math.sin((1 - t) * omega) / sinOmega;
-    const b = Math.sin(t * omega) / sinOmega;
-    points.push(
-      unitToLngLat([
-        a * start[0] + b * end[0],
-        a * start[1] + b * end[1],
-        a * start[2] + b * end[2],
-      ]),
-    );
+/**
+ * 拱起方向上的纬度极值（`ny>=0` 取最大、`ny<0` 取最小）。
+ * `lat(t) = lat0 + dy·t + 4·A·t(1-t)`，`A = ny·bow`；极值点可能在端点或内部临界点。
+ */
+function arcBulgeExtreme(lat0: number, dy: number, ny: number, bow: number): number {
+  const A = ny * bow;
+  const latAt = (t: number): number => lat0 + dy * t + 4 * A * t * (1 - t);
+  const candidates = [latAt(0), latAt(1)];
+  if (Math.abs(A) > 1e-9) {
+    const t = (dy + 4 * A) / (8 * A);
+    if (t > 0 && t < 1) candidates.push(latAt(t));
   }
-  return points;
-}
-
-function latLngToUnit(lat: number, lng: number): [number, number, number] {
-  const phi = lat * DEG2RAD;
-  const lambda = lng * DEG2RAD;
-  const cosPhi = Math.cos(phi);
-  return [cosPhi * Math.cos(lambda), cosPhi * Math.sin(lambda), Math.sin(phi)];
-}
-
-function unitToLngLat(v: [number, number, number]): [number, number] {
-  const [x, y, z] = v;
-  return [Math.atan2(y, x) * RAD2DEG, Math.atan2(z, Math.hypot(x, y)) * RAD2DEG];
-}
-
-function clamp(x: number, lo: number, hi: number): number {
-  return Math.max(lo, Math.min(hi, x));
+  return ny >= 0 ? Math.max(...candidates) : Math.min(...candidates);
 }
 
 /** 目标节点的地理信息（来自池子文件或事件）。 */

@@ -2,6 +2,7 @@ import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "
 import path from "node:path";
 import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
 import { buildFlightPath } from "./flight";
+import { originFromEnv } from "./origin";
 import {
   aggregatePool,
   loadPoolRecords,
@@ -34,11 +35,15 @@ export interface StoreOptions {
   flushIntervalMs?: number;
   /** 记账后去抖刷盘延迟（毫秒）。 */
   debounceMs?: number;
+  /** 弹道起点；缺省时依次回落文件持久值 / `IP_POOL_ORIGIN`。 */
+  origin?: FetchRouteOrigin | null;
 }
 
 export interface PersistedFileShape {
   hostname: string;
   updatedAt: string;
+  /** 弹道起点（持久化，避免 Store 重建后丢失）。 */
+  origin?: FetchRouteOrigin | null;
   ips: Record<string, IpFetchStatRow>;
 }
 
@@ -109,6 +114,7 @@ export class IpPoolStore {
     this.poolFile = options.poolFile;
     this.dataDir = options.dataDir;
     this.dataFile = path.join(options.dataDir, `${options.hostname}.yaml`);
+    this.origin = options.origin ?? null;
     this.maxRecentAttempts = options.maxRecentAttempts ?? 400;
     this.maxRecentRequests = options.maxRecentRequests ?? 200;
     this.maxRecentFlightPaths = options.maxRecentFlightPaths ?? 200;
@@ -117,6 +123,8 @@ export class IpPoolStore {
 
     this.loadPool();
     this.loadStats();
+    // 起点优先级：构造参数 > 文件持久值 > `IP_POOL_ORIGIN`
+    if (!this.origin) this.origin = originFromEnv() ?? null;
 
     if (this.flushIntervalMs > 0) {
       this.flushTimer = setInterval(() => this.flush(), this.flushIntervalMs);
@@ -144,6 +152,7 @@ export class IpPoolStore {
         this.byIp.set(ip, { ...row, totalBytes: row.totalBytes ?? 0 });
       }
       this.updatedAt = doc?.updatedAt ?? this.updatedAt;
+      if (!this.origin && doc?.origin) this.origin = doc.origin;
       this.rebuildBuckets();
     } catch (err) {
       console.error(`[ip-pool] 读取统计文件失败：${this.dataFile}`, err);
@@ -415,6 +424,7 @@ export class IpPoolStore {
       const payload: PersistedFileShape = {
         hostname: this.hostname,
         updatedAt: this.updatedAt,
+        origin: this.origin ?? undefined,
         ips: Object.fromEntries(this.byIp),
       };
       const tmp = `${this.dataFile}.tmp`;

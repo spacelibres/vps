@@ -236,6 +236,38 @@ export interface FetchActionResult {
   recorded: boolean;
 }
 
+/** `fetchBatch` / `batchStatus` 动作的返回：一次全池（或指定范围）抓取作业的进度。 */
+export interface FetchBatchStatus {
+  /** 是否正在运行。 */
+  running: boolean;
+  /** 本次作业的 IP 总数。 */
+  total: number;
+  /** 已完成数（成功 + HTTP 错误 + 传输错误）。 */
+  done: number;
+  success: number;
+  httpError: number;
+  transportError: number;
+  /** 实际并发上限。 */
+  concurrency: number;
+  /** 作业起始 / 结束时刻（UNIX ms）；未开始为 0。 */
+  startedAt: number;
+  finishedAt?: number;
+  /** 最近一次失败的简述。 */
+  lastError?: string;
+}
+
+/** 空作业（尚未跑过任何批量抓取）。 */
+export const EMPTY_BATCH_STATUS: FetchBatchStatus = {
+  running: false,
+  total: 0,
+  done: 0,
+  success: 0,
+  httpError: 0,
+  transportError: 0,
+  concurrency: 0,
+  startedAt: 0,
+};
+
 /** SSE `snapshot` 事件的形状。 */
 export interface StreamSnapshot {
   hostname: string;

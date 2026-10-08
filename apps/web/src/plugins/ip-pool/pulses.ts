@@ -33,17 +33,16 @@ function arcLatLngs(
   origin: FetchRouteOrigin,
   lat: number,
   lng: number,
-  ip: string,
+  _ip: string,
   arc: ArcOptions,
 ): Array<{ lat: number; lng: number }> {
-  const visual = ipVisual(ip, arc);
   const coords = mapDisplayArc(
     { lat: origin.lat, lng: origin.lng },
     { lat, lng },
     {
-      earthRadiusKm: arc.earthRadiusKm,
-      altitudeKm: visual.leoAltitudeKm,
-      orbitDisplayExaggeration: arc.orbitDisplayExaggeration,
+      bowFactor: arc.bowFactor,
+      maxBowDeg: arc.maxBowDeg,
+      maxAbsLat: arc.maxAbsLat,
       minSteps: arc.minSteps ?? 16,
       maxSteps: arc.maxSteps ?? 40,
     },
