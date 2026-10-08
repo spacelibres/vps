@@ -55,6 +55,10 @@ export interface HotDispatchResult {
   status: number;
   bytes: number;
   durationMs: number;
+  /** 响应体原始字节（服务器未解压时即 gzip 原始字节）。 */
+  body: Uint8Array;
+  /** 响应 `content-encoding`（服务器压缩时为 `gzip`；缺省无）。 */
+  encoding?: string;
 }
 
 interface Slot {
@@ -200,7 +204,14 @@ export class HotConnectionPool {
         slot.state = "denied";
         this.evictHot(ip);
       }
-      return { ip, status: res.status, bytes: buf.length, durationMs };
+      return {
+        ip,
+        status: res.status,
+        bytes: buf.length,
+        durationMs,
+        body: buf,
+        encoding: res.headers.get("content-encoding") ?? undefined,
+      };
     } catch (err) {
       slot.client?.close();
       slot.client = undefined;

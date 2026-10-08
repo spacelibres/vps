@@ -168,6 +168,12 @@ if ! grep -q '^SESSION_SECRET=' "$ENV_FILE" 2>/dev/null \
   ok "已生成随机 SESSION_SECRET"
 fi
 
+# 机器调用 token（外部下载器调 /api/** 用）；未设则不启用 token 鉴权。
+if ! grep -q '^PANEL_API_TOKEN=' "$ENV_FILE" 2>/dev/null; then
+  set_env PANEL_API_TOKEN "$(gen_secret)" "$ENV_FILE"
+  ok "已生成随机 PANEL_API_TOKEN（机器调用用，见 $ENV_FILE）"
+fi
+
 GENERATED_PW=""
 NEED_PW=0
 if [ -n "${PANEL_PASSWORD:-}" ]; then

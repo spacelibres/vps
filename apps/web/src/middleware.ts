@@ -8,9 +8,29 @@ function isPublic(pathname: string): boolean {
   return PUBLIC_PATHS.some((p) => pathname === p || pathname.startsWith(`${p}/`));
 }
 
+/** 定长比较，避免时序侧信道。 */
+function tokenEquals(a: string, b: string): boolean {
+  if (a.length !== b.length) return false;
+  let diff = 0;
+  for (let i = 0; i < a.length; i += 1) diff |= a.charCodeAt(i) ^ b.charCodeAt(i);
+  return diff === 0;
+}
+
+/**
+ * 允许携带机器 token 的调用方直接访问 `/api/**`（env `PANEL_API_TOKEN`；未设则关闭）。
+ * 仅用于机器到机器（如外部下载器调 ip-pool），不放开页面。
+ */
+function hasApiToken(req: NextRequest): boolean {
+  const expected = process.env.PANEL_API_TOKEN;
+  if (!expected) return false;
+  const provided = req.headers.get("x-api-token") ?? "";
+  return provided.length > 0 && tokenEquals(provided, expected);
+}
+
 export async function middleware(req: NextRequest) {
   const { pathname } = req.nextUrl;
   if (isPublic(pathname)) return NextResponse.next();
+  if (pathname.startsWith("/api/") && hasApiToken(req)) return NextResponse.next();
 
   const token = req.cookies.get(SESSION_COOKIE)?.value;
   if (await verifySessionToken(token)) return NextResponse.next();

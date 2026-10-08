@@ -258,6 +258,28 @@ export const EMPTY_DISPATCH_STATUS: DispatchStatus = {
   startedAt: 0,
 };
 
+/** `fetchUpstream` 动作：单个上游抓取结果。 */
+export interface UpstreamFetchResult {
+  ok: boolean;
+  /** 服务端拼回的上游 URL。 */
+  url: string;
+  /** 本次使用的热 IP。 */
+  ip: string;
+  status: number;
+  bytes: number;
+  durationMs: number;
+  /** 响应体 base64（服务器原始字节；服务器回 gzip 时即 gzip）。 */
+  bodyBase64?: string;
+  /** 响应 `content-encoding`（`gzip` 则调用方需自行解压）。 */
+  encoding?: string;
+  error?: string;
+}
+
+/** `fetchUpstream` 动作的返回。 */
+export interface UpstreamFetchPayload {
+  results: UpstreamFetchResult[];
+}
+
 /** SSE `metrics` 事件：请求速率 + 网卡流量 + 热池（约每秒一帧）。 */
 export interface StreamMetrics {
   ts: number;

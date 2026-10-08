@@ -7,6 +7,17 @@
 
 ## [未发布]
 
+## [0.0.40] - 2026-10-08
+
+### 新增
+
+- `ip-pool` 新增 `fetchUpstream` 动作（POST，`needsVps:false`）：供**外部下载器**调用的上游抓取。
+  - 输入只发**结构化参数**（不发长 URL）：`{ requests: [{ kind: "bulk"|"planetoid"|"raw", base?, path?, epoch?, url? }] }`（单批 ≤256）。
+  - 服务端拼 URL（`rocktree.ts`，纯逻辑）：`bulk → {base}/BulkMetadata/pb=!1m2!1s{path}!2u{epoch}`；`planetoid → {base}/PlanetoidMetadata`。
+  - 用**热连接**出网，返回服务器**原始字节**（base64）+ `encoding`（服务器回 gzip 时不解压，由调用方解压）；结果计入统计/弹道。
+- 中间件支持**机器 token**：env `PANEL_API_TOKEN` 已设时，携带 `x-api-token` 的 `/api/**` 请求可直接通过（不放开页面）；未设则关闭。
+  一键安装脚本会自动生成 `PANEL_API_TOKEN`。
+
 ## [0.0.39] - 2026-10-08
 
 ### 变更

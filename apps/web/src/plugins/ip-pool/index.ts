@@ -9,6 +9,7 @@
  * | snapshot | POST | false | `{}` | `{ events, rowsMerged, revision }` |
  * | dispatch | POST | false | `{ url?, count, concurrency? }` | `DispatchStatus`（本插件 types） |
  * | dispatchStatus | GET | false | `{}` | `DispatchStatus`（本插件 types） |
+ * | fetchUpstream | POST | false | `{ requests: [{ kind, base?, path?, epoch?, url? }] }` | `UpstreamFetchPayload`（本插件 types） |
  * | resetStats | POST | false | `{}` | `ResetStatsResult`（本插件 types） |
  * | stream | GET | false | `{}` | `Response`（SSE，`raw: true`） |
  *
@@ -29,7 +30,9 @@ import type {
   IngestInput,
   ResetStatsResult,
   StatsSnapshot,
+  UpstreamFetchPayload,
 } from "./types";
+import { fetchUpstream, MAX_UPSTREAM_BATCH } from "./upstream";
 import { ipPoolViews } from "./view";
 import { ensurePoolWarm, hotIpList } from "./warm";
 
@@ -230,6 +233,33 @@ export const dispatchStatusAction = defineAction({
   run: (): Promise<DispatchStatus> => Promise.resolve(dispatchStatus()),
 });
 
+const upstreamRequestSchema = z.object({
+  kind: z.enum(["bulk", "planetoid", "raw"]),
+  base: z.string().optional(),
+  path: z.string().optional(),
+  epoch: z.number().int().nonnegative().optional(),
+  url: z.string().optional(),
+});
+
+const fetchUpstreamSchema = z.object({
+  requests: z.array(upstreamRequestSchema).min(1).max(MAX_UPSTREAM_BATCH),
+});
+
+/**
+ * 上游抓取：外部（本机下载器）只发**结构化参数**（`kind` + `path`/`epoch`），
+ * 服务端拼 URL、用热连接出网，返回服务器原始字节（base64）。
+ * 服务器回 gzip 时不解压（`encoding="gzip"`），由调用方自行解压。
+ */
+export const fetchUpstreamAction = defineAction({
+  id: "fetchUpstream",
+  label: "上游抓取",
+  description: "按结构化参数拼 URL，用热连接出网抓取并返回原始字节（base64）",
+  method: "POST",
+  needsVps: false,
+  input: fetchUpstreamSchema,
+  run: (_ctx, input): Promise<UpstreamFetchPayload> => fetchUpstream(input.requests),
+});
+
 /**
  * 重置统计：清空所有 IP 计数与最近事件并落盘。
  * 远程 SSE 客户端通过 `resetEpoch` 变化收到 `reset` 事件后清空本地脉冲/采样/日志。
@@ -267,6 +297,7 @@ export const ipPoolActions: readonly PluginAction[] = [
   ingestAction,
   dispatchAction,
   dispatchStatusAction,
+  fetchUpstreamAction,
   resetStatsAction,
   statsAction,
   poolAction,
