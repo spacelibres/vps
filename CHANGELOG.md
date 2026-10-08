@@ -7,6 +7,15 @@
 
 ## [未发布]
 
+## [0.0.17] - 2026-10-08
+
+### 修复
+
+- `deploy/Caddyfile.template`：改用 `reverse_proxy` 内的 `header_down` 覆盖上游 `Cache-Control`。
+  站点级 `header` 指令会**追加**而非替换，导致响应出现**重复 `Cache-Control`**
+  （我们的长缓存 + 上游的 `max-age=0`），按最严格者生效 → 等于**没有缓存**。
+  现改为 `handle` 分支 + `header_down`，实测国旗 PNG 仅剩单条 `public, max-age=2592000`。
+
 ## [0.0.16] - 2026-10-08
 
 ### 变更

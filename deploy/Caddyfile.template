@@ -4,31 +4,37 @@
 # 占位符：__DOMAIN__ / __PORT__ / __GLOBAL__
 #
 # 说明：
-#  - 静态资源按类型分级缓存（构建产物一年 immutable；public/ 资源 30 天），
-#    避免每次访问都回源（尤其是 ip-pool 页面的国旗 PNG）；
+#  - 静态资源分级缓存，避免每次访问都回源（尤其是 ip-pool 页面的国旗 PNG）。
+#    注意必须用 `header_down`（在 reverse_proxy 内）来**覆盖**上游的 `Cache-Control`；
+#    站点级的 `header` 指令会**追加**而非替换，导致出现重复头、按最严格生效（等于没缓存）。
 #  - 压缩排除 SSE 流端点，避免缓冲影响实时弹道推送。
 
 __GLOBAL__
 
 __DOMAIN__ {
-	# ── 缓存策略 ──────────────────────────────────────────────
-	# 带内容哈希的构建产物：一年、不可变（内容变则文件名变）。
-	@immutable path /_next/static/*
-	header @immutable Cache-Control "public, max-age=31536000, immutable"
-
-	# Next 图片优化端点。
-	@optimized path /_next/image
-	header @optimized Cache-Control "public, max-age=2592000"
-
-	# public/ 下的静态资源（国旗、图标、字体、图片、favicon）：30 天。
-	@assets path_regexp (?i)\.(?:png|jpe?g|gif|svg|webp|avif|ico|woff2?|ttf|otf|eot)$
-	header @assets Cache-Control "public, max-age=2592000"
-
 	# ── 压缩（排除 SSE，避免缓冲）────────────────────────────
 	@compressible not path /api/plugins/*/actions/stream
 	encode @compressible zstd gzip
 
-	# 面板（Next.js）监听 127.0.0.1:__PORT__。
+	# ── 缓存：带内容哈希的构建产物 → 一年、不可变 ──────────
+	@immutable path /_next/static/*
+	handle @immutable {
+		reverse_proxy 127.0.0.1:__PORT__ {
+			header_down Cache-Control "public, max-age=31536000, immutable"
+		}
+	}
+
+	# ── 缓存：public/ 静态资源（国旗/图标/字体/图片/favicon）→ 30 天 ──
+	@assets path_regexp (?i)\.(?:png|jpe?g|gif|svg|webp|avif|ico|woff2?|ttf|otf|eot)$
+	handle @assets {
+		reverse_proxy 127.0.0.1:__PORT__ {
+			header_down Cache-Control "public, max-age=2592000"
+		}
+	}
+
+	# ── 其余：页面 HTML / API / SSE ─────────────────────────
 	# Caddy 自动带上 X-Forwarded-Proto / X-Forwarded-For，应用据此判定 Secure cookie。
-	reverse_proxy 127.0.0.1:__PORT__
+	handle {
+		reverse_proxy 127.0.0.1:__PORT__
+	}
 }
