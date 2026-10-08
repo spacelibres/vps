@@ -105,12 +105,48 @@ pnpm typecheck && pnpm test && pnpm build
 
 ## 10. 版本与变更日志（强制）
 
-- 版本号起始 **`0.0.1`**，**每次交付必须 `PATCH` +1**（`0.0.1` → `0.0.2` → …），除非用户明确要求改动 `MAJOR`/`MINOR`。
-- 版本号同时写入 `package.json`（仓库根与 `apps/web`，**两处必须一致**）。
-- 每次改动都必须在本仓库根 `CHANGELOG.md` 的对应版本条目下登记（遵循 Keep a Changelog：`新增` / `变更` / `修复` / `移除` / `安全`）。
-- 提交信息建议：`vX.Y.Z <简述>`（例如 `v0.0.2 ip-pool 增加行点击聚焦`）。
-- 远程仓库：`https://github.com/spacelibres/vps`（分支 `main`）。
+- **版本号起始 `0.0.1`，每次交付必须递增 `PATCH`（+1）**：`0.0.1` → `0.0.2` → …。
+  只有用户明确要求时才能改动 `MAJOR` / `MINOR`。
+- 版本号必须**同时**写入两处且保持一致：根 `package.json` 与 `apps/web/package.json`。
+- 版本号**不得跳号、不得复用**；已发布过的版本号不得再修改。
+- 每次改动必须在根 `CHANGELOG.md` 登记：
+  - 结构固定为 `## [X.Y.Z] - YYYY-MM-DD`，条目分类固定为 `新增` / `变更` / `修复` / `移除` / `安全`（无内容可省略）。
+  - 未交付的改动写在 `## [未发布]` 下；交付时把该段移到新版本号下并填日期。
+  - **一次交付 = 一个版本号 = 一个提交**，不相关的改动不得塞进同一版本。
+- 每个版本必须打 tag `vX.Y.Z`，与提交信息、CHANGELOG 中的版本号**严格一致**。
 
-## 11. 禁止提交的内容
+### 交付流程（必须逐条执行）
+
+```bash
+# 1. 改代码
+# 2. 递增版本号（根 package.json 与 apps/web/package.json 两处，保持一致）
+# 3. 更新 CHANGELOG.md（把 [未发布] 段落移到 [X.Y.Z] - 日期）
+# 4. 门槛校验（缺一不可）
+pnpm typecheck && pnpm test && pnpm build
+# 5. 确认没有敏感文件进入暂存（有则立即停止）
+git add -A
+git diff --cached --name-only | grep -E '\.env$|config/vps\.yaml$|^apps/web/data/' && echo '发现敏感文件，停止！'
+# 6. 提交 + 打 tag
+git commit -m "vX.Y.Z <简述>"
+git tag vX.Y.Z
+# 7. 推送（必须带上 tag）
+git push origin main --follow-tags
+```
+
+## 11. Git 与远程仓库
+
+- 远程 `origin` = `https://github.com/spacelibres/vps.git`，主分支 **`main`**。
+- 提交信息格式：**`vX.Y.Z <中文简述>`**（例：`v0.0.2 规则书补充版本控制与发布流程`）。
+  一次提交只做一件事；**禁止** `update` / `fix` / `wip` 之类无信息量的信息。
+- **网络**：本机直连 `github.com` 会超时，必须经本地 SOCKS5 代理（已在 `.git/config` 配置）：
+  ```bash
+  git config --local http.proxy socks5h://127.0.0.1:20170
+  ```
+- **认证**：禁止把 token 写进 `origin` URL 或任何被跟踪文件；推送时使用一次性认证，或
+  `gh auth login --with-token` + `gh auth setup-git`。本机 `credential.helper=store` 可能是其它账号凭据，推送会被拒（403）。
+- **推送前必须确认历史清晰**：`git log --oneline` 每个版本一条；`git tag` 与 `CHANGELOG.md` 的版本号一一对应。
+- **绝不** `push --force` 已推送的 `main`。
+
+## 12. 禁止提交的内容
 
 `.env`、`config/vps.yaml`、`data/` 已被 `.gitignore` 忽略，**不得**用 `git add -f` 强行提交。提交前用 `git status` 目视确认。
