@@ -1,9 +1,12 @@
 import type { LatLngBounds, Layer, Map as LeafletMap } from "leaflet";
+import { ipColor } from "./flight";
 import type { RoutePulse } from "./types";
 
 type Leaflet = typeof import("leaflet");
 
 const IDLE_ROUTE_ALPHA = 0.28;
+/** 热连接（h2 常驻绿色通道）骨架透明度。 */
+const HOT_IDLE_ALPHA = 0.32;
 
 /** 地图上的脉冲航线图层（canvas 自绘，支持世界副本）。 */
 export interface PulseRouteLayer extends Layer {
@@ -233,22 +236,32 @@ export function createPulseRouteLayer(
       for (const pulse of live) {
         if (pulse.latlngs.length < 2) continue;
 
-        // 未激活：灰色常驻全长，作为预热骨架
+        // 热连接（h2 常驻绿色通道）：**本 IP 颜色 + 实线**（不再发虚）；冷连接保持虚线。
+        // 不因“热”而改颜色 —— 每 IP 自己的颜色始终保留。
+        const hot = pulse.hot === true;
+        const perIp = pulse.pinnedIp ? ipColor(pulse.pinnedIp) : pulse.color;
+
+        // 未激活：热 = 本 IP 颜色实线骨架；冷 = 灰色虚线骨架
         if (!pulse.active) {
-          ctx.globalAlpha = IDLE_ROUTE_ALPHA;
-          ctx.strokeStyle = pulse.idleColor;
+          const color = hot ? perIp : pulse.idleColor;
+          ctx.globalAlpha = hot ? HOT_IDLE_ALPHA : IDLE_ROUTE_ALPHA;
+          ctx.strokeStyle = color;
+          ctx.lineWidth = hot ? 1.8 : 1.5;
+          ctx.setLineDash(hot ? [] : [7, 9]);
           ctx.lineDashOffset = 0;
           for (const off of lngOffsets) {
             strokeLatLngPath(ctx, mapInst, pulse.latlngs, off);
             const head = pulse.latlngs[pulse.latlngs.length - 1]!;
             const hp = mapInst.latLngToContainerPoint([head.lat, head.lng + off]);
             ctx.setLineDash([]);
-            ctx.fillStyle = pulse.idleColor;
+            ctx.fillStyle = color;
             ctx.beginPath();
-            ctx.arc(hp.x, hp.y, 2.2, 0, Math.PI * 2);
+            ctx.arc(hp.x, hp.y, hot ? 2.6 : 2.2, 0, Math.PI * 2);
             ctx.fill();
-            ctx.setLineDash([7, 9]);
+            ctx.setLineDash(hot ? [] : [7, 9]);
           }
+          ctx.lineWidth = 1.5;
+          ctx.setLineDash([7, 9]);
           continue;
         }
 
@@ -273,10 +286,12 @@ export function createPulseRouteLayer(
         const pts = samplePathPrefix(pulse.latlngs, drawT);
         if (pts.length < 2) continue;
 
-        // 激活：本 IP 自己的颜色（与 flight-map 一致，不因热连接改色）
+        // 激活：本 IP 自己的颜色（与 flight-map 一致）；热连接走实线、冷连接走流动虚线。
         ctx.globalAlpha = opacity;
         ctx.strokeStyle = pulse.color;
-        ctx.lineDashOffset = -(age / 28);
+        ctx.lineWidth = hot ? 2 : 1.5;
+        ctx.setLineDash(hot ? [] : [7, 9]);
+        ctx.lineDashOffset = hot ? 0 : -(age / 28);
         for (const off of lngOffsets) {
           strokeLatLngPath(ctx, mapInst, pts, off);
           const head = pts[pts.length - 1]!;
@@ -286,8 +301,10 @@ export function createPulseRouteLayer(
           ctx.beginPath();
           ctx.arc(hp.x, hp.y, 2.8, 0, Math.PI * 2);
           ctx.fill();
-          ctx.setLineDash([7, 9]);
+          ctx.setLineDash(hot ? [] : [7, 9]);
         }
+        ctx.lineWidth = 1.5;
+        ctx.setLineDash([7, 9]);
       }
 
       ctx.globalAlpha = 1;
