@@ -2,16 +2,15 @@
 #
 # 作用：对外用 443（HTTPS，自动申请 Let's Encrypt 证书）→ 转发到本机 __PORT__（面板）。
 # 占位符：__DOMAIN__ / __PORT__ / __GLOBAL__
+#
+# 说明：这里刻意保持最小配置。
+#  - 不启用 `encode`：Next.js 自身已压缩静态资源，且避免压缩缓冲影响 SSE 实时推送；
+#  - 不加 `flush_interval`：Caddy 2.6 不支持该指令，反向代理默认即为即到即转（SSE 正常）。
 
 __GLOBAL__
 
 __DOMAIN__ {
-	encode zstd gzip
-
 	# 面板（Next.js）监听 127.0.0.1:__PORT__。
-	# Caddy 会自动带上 X-Forwarded-Proto / X-Forwarded-For，应用据此判定 Secure cookie。
+	# Caddy 自动带上 X-Forwarded-Proto / X-Forwarded-For，应用据此判定 Secure cookie。
 	reverse_proxy 127.0.0.1:__PORT__
-
-	# 关闭对上游的响应缓冲，保证 ip-pool 的 SSE（实时弹道）不被积压。
-	flush_interval -1
 }

@@ -7,6 +7,14 @@
 
 ## [未发布]
 
+## [0.0.12] - 2026-10-08
+
+### 修复
+
+- `deploy/Caddyfile.template`：移除 Caddy 2.6 不支持的 `flush_interval`（以及非必需的 `encode`），
+  修复 `unrecognized directive: flush_interval` 导致校验失败；SSE 由反代默认即到即转保障。
+- `deploy/setup-caddy.sh`：写入前先备份，校验失败自动**回滚**并退出（不再留下坏配置）。
+
 ## [0.0.11] - 2026-10-08
 
 ### 新增

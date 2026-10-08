@@ -50,9 +50,11 @@ elif [ -f /etc/caddy/Caddyfile ] && grep -q '^\s*email ' /etc/caddy/Caddyfile 2>
 fi
 
 log "生成 /etc/caddy/Caddyfile（$DOMAIN → 127.0.0.1:$PORT）"
-if [ -f /etc/caddy/Caddyfile ] && ! grep -q '__DOMAIN__\|Caddyfile.template' /etc/caddy/Caddyfile 2>/dev/null; then
-  cp /etc/caddy/Caddyfile "/etc/caddy/Caddyfile.bak.$(date +%Y%m%d%H%M%S)"
-  warn "已备份原 Caddyfile"
+BACKUP=""
+if [ -f /etc/caddy/Caddyfile ]; then
+  BACKUP="/etc/caddy/Caddyfile.bak.$(date +%Y%m%d%H%M%S)"
+  cp /etc/caddy/Caddyfile "$BACKUP"
+  warn "已备份原 Caddyfile → $BACKUP"
 fi
 
 sed -e "s|__DOMAIN__|$DOMAIN|g" \
@@ -60,7 +62,14 @@ sed -e "s|__DOMAIN__|$DOMAIN|g" \
     -e "s|__GLOBAL__|$GLOBAL|g" \
     "$TEMPLATE" > /etc/caddy/Caddyfile
 
-caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile >/dev/null
+if ! caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile >/dev/null 2>&1; then
+  caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile || true
+  if [ -n "$BACKUP" ]; then
+    cp "$BACKUP" /etc/caddy/Caddyfile
+    warn "新配置校验失败，已回滚到备份"
+  fi
+  die "Caddyfile 校验失败（未应用）"
+fi
 ok "Caddyfile 校验通过"
 
 # ── 3. 启动 / 重载 ───────────────────────────────────────────
