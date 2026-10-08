@@ -108,15 +108,23 @@ command -v node >/dev/null 2>&1 || die "未找到 node，请先安装 Node.js �
 NODE_MAJOR="$(node -p 'process.versions.node.split(".")[0]')"
 [ "$NODE_MAJOR" -ge 20 ] || die "Node.js 版本过低（当前 $(node -v)），需要 ≥ 20"
 
-if ! command -v pnpm >/dev/null 2>&1; then
-  log "未找到 pnpm，尝试启用 corepack…"
+pnpm_ok() { command -v pnpm >/dev/null 2>&1 && pnpm -v >/dev/null 2>&1; }
+
+if ! pnpm_ok; then
+  log "pnpm 不可用，尝试启用 corepack…"
   if command -v corepack >/dev/null 2>&1; then
     corepack enable >/dev/null 2>&1 || true
     corepack prepare pnpm@11.22.0 --activate >/dev/null 2>&1 || true
   fi
-  command -v pnpm >/dev/null 2>&1 || npm install -g pnpm
 fi
-command -v pnpm >/dev/null 2>&1 || die "pnpm 不可用，请手动安装：npm i -g pnpm"
+
+# Debian/Ubuntu 自带的 corepack 唨有时会损坏（在即可，但运行报错），此时改用 npm 全局安装。
+if ! pnpm_ok; then
+  log "corepack 不可用，改用 npm 全局安装 pnpm…"
+  npm install -g pnpm
+  hash -r 2>/dev/null || true
+fi
+pnpm_ok || die "pnpm 不可用，请手动安装：npm i -g pnpm"
 
 if ! command -v pm2 >/dev/null 2>&1; then
   log "未找到 pm2，正在全局安装…"

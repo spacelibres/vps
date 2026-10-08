@@ -7,6 +7,14 @@
 
 ## [未发布]
 
+## [0.0.7] - 2026-10-08
+
+### 修复
+
+- `deploy/install.sh`：pnpm 探活改为**实际执行 `pnpm -v`**，而非仅判断可执行文件存在；
+  避开 Debian/Ubuntu 自带 corepack 唨损坏（`ERR_VM_DYNAMIC_IMPORT_CALLBACK_MISSING`）导致
+  `pnpm install` 失败。corepack 不可用时改用 `npm i -g pnpm`。
+
 ## [0.0.6] - 2026-10-08
 
 ### 变更
