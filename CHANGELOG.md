@@ -7,6 +7,13 @@
 
 ## [未发布]
 
+## [0.0.8] - 2026-10-08
+
+### 修复
+
+- `apps/web/package.json` 新增 `pnpm.onlyBuiltDependencies`（`esbuild` / `@tailwindcss/oxide` /
+  `sharp` / `node-wreq`），修复 pnpm 12 因「忽略构建脚本」直接报 `ERR_PNPM_IGNORED_BUILDS` 导致安装失败。
+
 ## [0.0.7] - 2026-10-08
 
 ### 修复

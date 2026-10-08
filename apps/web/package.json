@@ -1,6 +1,6 @@
 {
   "name": "vps-panel",
-  "version": "0.0.7",
+  "version": "0.0.8",
   "private": true,
   "scripts": {
     "dev": "next dev",
@@ -28,5 +28,13 @@
     "tailwindcss": "^4.1.0",
     "typescript": "^5.7.0",
     "vitest": "^2.1.8"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "esbuild",
+      "@tailwindcss/oxide",
+      "sharp",
+      "node-wreq"
+    ]
   }
 }
