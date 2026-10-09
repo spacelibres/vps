@@ -1,6 +1,7 @@
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { parse as parseYaml } from "yaml";
+import { BoundedKeySet } from "./dedupe";
 import { buildFlightPath } from "./flight";
 import { originFromEnv } from "./origin";
 import {
@@ -35,9 +36,14 @@ export interface StoreOptions {
   flushIntervalMs?: number;
   /** 记账后去抖刷盘延迟（毫秒）。 */
   debounceMs?: number;
+  /** 幂等去重集合容量上限（每个集合最多保留多少个键）；<=0 默认 100000。 */
+  dedupeCapacity?: number;
   /** 弹道起点；缺省时依次回落文件持久值 / `IP_POOL_ORIGIN`。 */
   origin?: FetchRouteOrigin | null;
 }
+
+/** 去重集合默认容量：约覆盖十几分钟重试窗口，内存占用有界。 */
+const DEFAULT_DEDUPE_CAPACITY = 100_000;
 
 export interface PersistedFileShape {
   hostname: string;
@@ -102,6 +108,7 @@ export class IpPoolStore {
   private readonly maxRecentFlightPaths: number;
   private readonly flushIntervalMs: number;
   private readonly debounceMs: number;
+  private readonly dedupeCapacity: number;
 
   private pool: HostPinRecord[] = [];
   private poolIndex = new Map<string, HostPinRecord>();
@@ -116,9 +123,9 @@ export class IpPoolStore {
 
   private origin: FetchRouteOrigin | null = null;
 
-  private readonly seenAttempts = new Set<string>();
-  private readonly seenRequests = new Set<string>();
-  private readonly seenFlightPaths = new Set<string>();
+  private readonly seenAttempts: BoundedKeySet;
+  private readonly seenRequests: BoundedKeySet;
+  private readonly seenFlightPaths: BoundedKeySet;
 
   revision = 0;
   /** 重置次数（递增）；SSE 用它广播 `reset`。 */
@@ -141,6 +148,10 @@ export class IpPoolStore {
     this.maxRecentFlightPaths = options.maxRecentFlightPaths ?? 200;
     this.flushIntervalMs = options.flushIntervalMs ?? 15_000;
     this.debounceMs = options.debounceMs ?? 2_000;
+    this.dedupeCapacity = options.dedupeCapacity ?? DEFAULT_DEDUPE_CAPACITY;
+    this.seenAttempts = new BoundedKeySet(this.dedupeCapacity);
+    this.seenRequests = new BoundedKeySet(this.dedupeCapacity);
+    this.seenFlightPaths = new BoundedKeySet(this.dedupeCapacity);
 
     this.loadPool();
     this.loadStats();
@@ -518,6 +529,12 @@ export function resolvePoolFile(): string {
 
 let store: IpPoolStore | null = null;
 
+/** 解析正整数环境变量；非法/缺省返回 undefined。 */
+function positiveIntEnv(raw: string | undefined): number | undefined {
+  const n = Number(raw);
+  return Number.isFinite(n) && n > 0 ? Math.floor(n) : undefined;
+}
+
 /** 取进程内单例 Store（按 `IP_POOL_HOSTNAME`，默认 `kh.google.com`）。 */
 export function getStore(): IpPoolStore {
   if (store) return store;
@@ -526,6 +543,7 @@ export function getStore(): IpPoolStore {
     hostname,
     poolFile: resolvePoolFile(),
     dataDir: process.env.IP_POOL_DATA_DIR ?? path.join(process.cwd(), "data", "ip-stats"),
+    dedupeCapacity: positiveIntEnv(process.env.IP_POOL_DEDUPE_CAPACITY),
   });
   return store;
 }

@@ -3,7 +3,10 @@
 //   pm2 start deploy/ecosystem.config.cjs
 //   pm2 restart deploy/ecosystem.config.cjs --update-env
 //
-// 可用环境变量覆盖：APP_NAME / PORT / HOST
+// 可用环境变量覆盖：APP_NAME / PORT / HOST / MAX_MEMORY_RESTART
+//
+// max_memory_restart：面板整池热连接（~1745 条）原生内存约占 600MB，稳态 RSS ≈ 800MB。
+// 默认 1400M 给突发留余量；超过才让 pm2 重启（重启会清空热池→502）。
 //
 // 注意：`cwd` 必须是 `apps/web`——应用用 `process.cwd()` 解析
 // `config/vps.yaml`、`config/kh.google.com.yaml` 与 `data/`。
@@ -28,7 +31,7 @@ module.exports = {
         NODE_ENV: "production",
         PORT: port,
       },
-      max_memory_restart: process.env.MAX_MEMORY_RESTART || "1024M",
+      max_memory_restart: process.env.MAX_MEMORY_RESTART || "1400M",
       autorestart: true,
       max_restarts: 10,
       restart_delay: 2000,

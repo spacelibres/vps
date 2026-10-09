@@ -7,6 +7,20 @@
 
 ## [未发布]
 
+## [0.0.45] - 2026-10-09
+
+### 修复
+
+- **ip-pool 去重集合内存无上限导致面板周期性被 pm2 重启**：`IpPoolStore.ingest` 的
+  `seenAttempts/seenRequests/seenFlightPaths` 原为无界 `Set`，长时间运行无限增长（实测 50 万+ 键），
+  RSS 涨到 PM2 `max_memory_restart`（1024M）→ SIGKILL 重启 → **1717 条热连接全断 → 出网 502 →
+  上游 bulkfetch/download 速度集体崩**（约每小时一轮）。
+  新增 `dedupe.ts` 的 `BoundedKeySet`（容量上限 + 插入序淘汰最旧键），
+  可用 `IP_POOL_DEDUPE_CAPACITY` 覆盖（默认 100000，约覆盖十几分钟重试窗口）；
+  去重只需覆盖重试窗口，有界不影响幂等。
+- `deploy/ecosystem.config.cjs`：`max_memory_restart` 1024M → **1400M**（可用 `MAX_MEMORY_RESTART` 覆盖）。
+  面板整池热连接原生内存约占 600MB，稳态 RSS ≈ 800MB；抬高上限避免突发触发重启断热池。
+
 ## [0.0.44] - 2026-10-09
 
 ### 新增
