@@ -12,6 +12,7 @@
 #
 # 可选环境变量（都不填也能跑）：
 #   PANEL_PASSWORD=xxx    面板登录密码（不填则交互询问；非交互则自动生成并打印）
+#   PANEL_ORIGIN=34.05,-118.25,Los Angeles   IP 池航线起点（不填则用本机公网 IP 反查城市）
 #   DOMAIN=panel.example.com   对外域名（不填则自动探测 hostname -f 是否解析到本机）
 #   EMAIL=me@example.com  ACME 账号邮箱（可选）
 #   PORT=8080             面板端口（默认 3000；仅在未启用 Caddy 时对外暴露）
@@ -193,6 +194,35 @@ if [ "$NEED_PW" = "1" ]; then
   esac
   set_env PANEL_PASSWORD "$PW" "$ENV_FILE"
   ok "已写入 PANEL_PASSWORD"
+fi
+
+# ── 6b. IP 池路线起点 IP_POOL_ORIGIN ─────────────────────────
+# IP_POOL_ORIGIN="lat,lng[,label]"：ip-pool 航线图的起点。优先 PANEL_ORIGIN；
+# 否则用本机公网 IP 反查所在城市；都失败则不写（页面无航线，可稍后手填）。
+if ! grep -q '^IP_POOL_ORIGIN=' "$ENV_FILE" 2>/dev/null; then
+  ORIGIN="${PANEL_ORIGIN:-}"
+  if [ -z "$ORIGIN" ]; then
+    PUB_IP="$(curl -s --max-time 8 https://ifconfig.me 2>/dev/null || true)"
+    if [ -n "$PUB_IP" ]; then
+      GEO="$(curl -s --max-time 10 "http://ip-api.com/json/${PUB_IP}?fields=status,lat,lon,city" 2>/dev/null || true)"
+      case "$GEO" in
+        *'"status":"success"'*)
+          GLAT="$(printf '%s' "$GEO" | sed -n 's/.*"lat":\([-0-9.]*\).*/\1/p')"
+          GLON="$(printf '%s' "$GEO" | sed -n 's/.*"lon":\([-0-9.]*\).*/\1/p')"
+          GCITY="$(printf '%s' "$GEO" | sed -n 's/.*"city":"\([^"]*\)".*/\1/p')"
+          if [ -n "$GLAT" ] && [ -n "$GLON" ]; then
+            if [ -n "$GCITY" ]; then ORIGIN="$GLAT,$GLON,$GCITY"; else ORIGIN="$GLAT,$GLON"; fi
+          fi
+          ;;
+      esac
+    fi
+  fi
+  if [ -n "$ORIGIN" ]; then
+    set_env IP_POOL_ORIGIN "$ORIGIN" "$ENV_FILE"
+    ok "IP 池弹道起点 IP_POOL_ORIGIN=$ORIGIN"
+  else
+    warn "未能自动探测 IP 池起点；若页面无航线，请设 PANEL_ORIGIN 或手填 .env 的 IP_POOL_ORIGIN"
+  fi
 fi
 
 # ── 7. VPS 凭据 apps/web/config/vps.yaml ─────────────────────
