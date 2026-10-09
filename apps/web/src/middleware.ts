@@ -1,4 +1,5 @@
 import { NextResponse, type NextRequest } from "next/server";
+import { absoluteUrl, publicOrigin } from "@/lib/public-origin";
 import { SESSION_COOKIE, verifySessionToken } from "@/lib/session";
 
 /** 无需登录即可访问的路径。 */
@@ -43,8 +44,9 @@ export async function middleware(req: NextRequest) {
     );
   }
 
-  const url = req.nextUrl.clone();
-  url.pathname = "/login";
+  // 反代后 req.nextUrl 是内部地址（localhost:3000），必须用 x-forwarded-* 重建，
+  // 否则会把用户重定向到 https://localhost:3000。
+  const url = absoluteUrl("/login", publicOrigin(req.headers, req.nextUrl.origin), req.nextUrl.origin);
   url.searchParams.set("next", pathname);
   return NextResponse.redirect(url);
 }

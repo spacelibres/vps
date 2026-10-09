@@ -7,6 +7,15 @@
 
 ## [未发布]
 
+## [0.0.42] - 2026-10-08
+
+### 修复
+
+- **反代后重定向到 `https://localhost:3000`**：Next 的 `req.nextUrl` 在反向代理后是内部地址
+  （`http://localhost:3000`），中间件直接 `clone()` 做重定向会把用户打到 `localhost:3000`（表现为
+  「浏览器提示不安全 / 无法访问」）。改为用 `x-forwarded-host`（回退 `host`）+ `x-forwarded-proto`
+  重建 origin（新增纯模块 `src/lib/public-origin.ts` + 单测）。
+
 ## [0.0.41] - 2026-10-08
 
 ### 修复

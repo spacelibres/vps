@@ -142,6 +142,9 @@ export abstract class KiwiVmClient {
 - env `PANEL_PASSWORD`；登录成功后签发签名 cookie（`jose` HS256），密钥来自 env `SESSION_SECRET`。
 - 中间件校验 cookie，未通过则重定向 `/login`。
 - 服务端 route handler 再次校验（不信任客户端）。
+- **反代 origin**：经 Caddy 时 Next 的 `req.nextUrl` 是内部地址（`http://localhost:3000`），直接 clone 会把用户
+  重定向到 `localhost:3000`。重定向改用 `x-forwarded-host`（回退 `host`）+ `x-forwarded-proto` 重建
+  （`lib/public-origin.ts`，纯逻辑 + 单测）。
 
 ## 8. 凭据配置
 
