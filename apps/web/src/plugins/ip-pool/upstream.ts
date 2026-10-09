@@ -15,8 +15,6 @@ import { ensurePoolWarm, getHotPool } from "./warm";
 export const MAX_UPSTREAM_BATCH = 256;
 /** 单条响应体上限（超过则报错，避免 base64 爆内存）。 */
 const MAX_BODY_BYTES = 16 * 1024 * 1024;
-/** 批内并发上限。 */
-const BATCH_CONCURRENCY = 32;
 
 /** 热 IP 轮询游标（进程内）。 */
 let cursor = 0;
@@ -34,7 +32,10 @@ export async function fetchUpstream(
   }
 
   const results = new Array<UpstreamFetchResult>(requests.length);
-  const workers = Math.max(1, Math.min(requests.length, BATCH_CONCURRENCY));
+  // 批内并发：默认不限制（`IP_POOL_UPSTREAM_CONCURRENCY<=0`），整批一起发出——
+  // 并发度由**热池连接数**自然约束，不在此处写死上限。
+  const limit = cfg.upstreamConcurrency;
+  const workers = limit > 0 ? Math.max(1, Math.min(requests.length, limit)) : Math.max(1, requests.length);
   let next = 0;
   let seq = 0;
 

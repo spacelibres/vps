@@ -35,3 +35,28 @@ describe("fetchConfig 派发默认值", () => {
     delete process.env.IP_POOL_DISPATCH_TIMEOUT_MS;
   });
 });
+
+describe("fetchConfig.upstreamConcurrency", () => {
+  const prev = process.env.IP_POOL_UPSTREAM_CONCURRENCY;
+  afterEach(() => {
+    if (prev === undefined) delete process.env.IP_POOL_UPSTREAM_CONCURRENCY;
+    else process.env.IP_POOL_UPSTREAM_CONCURRENCY = prev;
+  });
+
+  it("默认不限制（0）", () => {
+    delete process.env.IP_POOL_UPSTREAM_CONCURRENCY;
+    expect(fetchConfig().upstreamConcurrency).toBe(0);
+  });
+
+  it("可用环境变量限制", () => {
+    process.env.IP_POOL_UPSTREAM_CONCURRENCY = "64";
+    expect(fetchConfig().upstreamConcurrency).toBe(64);
+  });
+
+  it("非法/空值回落到不限制", () => {
+    process.env.IP_POOL_UPSTREAM_CONCURRENCY = "";
+    expect(fetchConfig().upstreamConcurrency).toBe(0);
+    process.env.IP_POOL_UPSTREAM_CONCURRENCY = "abc";
+    expect(fetchConfig().upstreamConcurrency).toBe(0);
+  });
+});
