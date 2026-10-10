@@ -7,6 +7,16 @@
 
 ## [未发布]
 
+## [0.0.47] - 2026-10-09
+
+### 修复
+
+- **Caddy 上游关闭连接复用，消除 `connection reset by peer` 导致的 502**：`deploy/Caddyfile.template` 的
+  `handle` 块 `reverse_proxy` 加 `transport http { keepalive off }`。
+  背景：上游 Next.js/Node 默认 `keepAliveTimeout≈5s`，Caddy 复用空闲上游连接时会与 Node 关闭竞争，
+  触发 `read tcp 127.0.0.1:3000: connection reset by peer` → **502**（高并发 API 下集中出现，
+  使本机 download 任务回队重抓、速度衰减）。关闭上游连接复用避开该竞争。需重跑一键安装（重生成 Caddyfile）。
+
 ## [0.0.46] - 2026-10-09
 
 ### 新增

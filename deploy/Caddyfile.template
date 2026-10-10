@@ -32,9 +32,17 @@ __DOMAIN__ {
 		}
 	}
 
-	# ── 其余：页面 HTML / API / SSE ─────────────────────────
-	# Caddy 自动带上 X-Forwarded-Proto / X-Forwarded-For，应用据此判定 Secure cookie。
-	handle {
-		reverse_proxy 127.0.0.1:__PORT__
+	# ── 其余：页面 HTML / API / SSE ──────────────────────────
+		# Caddy 自动带上 X-Forwarded-Proto / X-Forwarded-For，应用据此判定 Secure cookie。
+		#
+		# 上游（Next.js/Node）默认 keepAliveTimeout≈5s，代理复用空闲连接时会与 Node 关闭竞争，
+		# 触发 `read ... connection reset by peer` → **502**（高并发 API 下集中出现）。
+		# 关掉上游连接复用，每次新建连接，避开该竞争。
+		handle {
+			reverse_proxy 127.0.0.1:__PORT__ {
+				transport http {
+					keepalive off
+				}
+			}
+		}
 	}
-}
