@@ -15,6 +15,9 @@
   - `node-wreq`：`ip-pool` 插件**保持整池常驻热连接**（预热/保活）所需——浏览器 **TLS/JA3/JA4 + HTTP2 指纹**与**钉 IP**
     （Rust 原生绑定，带 `linux-x64-gnu` 预编译；直连不通时配合 `IP_POOL_PROXY` 代理）。
     插件**不做业务抓取派发**（抓取属于独立 fetch 插件）。
+  - `protobufjs`：`ip-pool` 插件 `fetchUpstreamProto` 动作把上游抓取结果编码为
+    **length-delimited protobuf 帧**（与 SpaceXWay `fetch/proto/panel.proto` 同 schema），
+    消除 JSON 解析开销与 base64 的 ~33% 膨胀（body 直接回原始字节）。
 - 包管理器 pnpm；Node ≥ 20。
 - 表单与校验的**唯一元数据来源是 zod schema**。
 

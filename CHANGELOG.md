@@ -7,6 +7,20 @@
 
 ## [未发布]
 
+## [0.0.48] - 2026-10-10
+
+### 新增
+
+- **ip-pool `fetchUpstreamProto`（length-delimited protobuf 二进制帧流）**：与 `fetchUpstreamStream`
+  同一逐条逻辑，但**不再 JSON 包裹、不再 base64**——每帧 `[u32 大端长度][StreamFrame]`，
+  `body` 直接是上游**原始字节**（gzip 即 gzip），末帧 `done=true`。
+  帧 schema 见 `apps/web/src/plugins/ip-pool/frame.ts`（权威：SpaceXWay `fetch/proto/panel.proto`）。
+  收益：消除 JSON 解析开销与 base64 的 ~33% 膨胀（本机 download 侧同步支持，见 SpaceXWay `fetch.panel_wire`）。
+- 依赖：新增 `protobufjs`（已在 `AGENTS.md` §0 登记理由）。
+- `upstream.ts`：`runUpstreamRequests` 回调改带原始字节（`UpstreamDispatch{result, body}`），
+  并支持 `encodeBase64` 关闭（proto 路不需要 base64 编码、省 CPU）。
+- 测试：`frame.test.ts` 对拍帧字节（长度前缀 + protobuf 字段）。
+
 ## [0.0.47] - 2026-10-09
 
 ### 修复

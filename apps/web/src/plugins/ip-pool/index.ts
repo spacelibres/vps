@@ -11,6 +11,7 @@
  * | dispatchStatus | GET | false | `{}` | `DispatchStatus`（本插件 types） |
  * | fetchUpstream | POST | false | `{ requests: [{ kind, base?, path?, epoch?, url? }] }` | `UpstreamFetchPayload`（本插件 types） |
  * | fetchUpstreamStream | POST | false | `{ requests: [...] }` | `Response`（NDJSON，`raw: true`；逐行 `UpstreamStreamLine`） |
+ * | fetchUpstreamProto | POST | false | `{ requests: [...] }` | `Response`（length-delimited protobuf 帧，`raw: true`；见 `frame.ts`） |
  * | resetStats | POST | false | `{}` | `ResetStatsResult`（本插件 types） |
  * | stream | GET | false | `{}` | `Response`（SSE，`raw: true`） |
  *
@@ -34,6 +35,7 @@ import type {
   UpstreamFetchPayload,
 } from "./types";
 import { fetchUpstream, MAX_UPSTREAM_BATCH } from "./upstream";
+import { fetchUpstreamProto } from "./upstreamProto";
 import { fetchUpstreamStream } from "./upstreamStream";
 import { ipPoolViews } from "./view";
 import { ensurePoolWarm, hotIpList } from "./warm";
@@ -278,6 +280,22 @@ export const fetchUpstreamStreamAction = defineAction({
 });
 
 /**
+ * 上游抓取（二进制帧流）：与 `fetchUpstreamStream` 同一逐条逻辑，但返回
+ * **length-delimited protobuf 帧**（body 为上游原始字节，不做 base64），
+ * 省去 JSON 解析与 base64 的 ~33% 膨胀。帧定义见 `frame.ts`。
+ */
+export const fetchUpstreamProtoAction = defineAction({
+  id: "fetchUpstreamProto",
+  label: "上游抓取（帧流）",
+  description: "按结构化参数拼 URL，用热连接出网抓取，按 protobuf 二进制帧流式返回原始字节（不做 base64）",
+  method: "POST",
+  needsVps: false,
+  raw: true,
+  input: fetchUpstreamSchema,
+  run: (_ctx, input): Promise<Response> => Promise.resolve(fetchUpstreamProto(input.requests)),
+});
+
+/**
  * 重置统计：清空所有 IP 计数与最近事件并落盘。
  * 远程 SSE 客户端通过 `resetEpoch` 变化收到 `reset` 事件后清空本地脉冲/采样/日志。
  * 热连接属运行时状态，不受影响。
@@ -316,6 +334,7 @@ export const ipPoolActions: readonly PluginAction[] = [
   dispatchStatusAction,
   fetchUpstreamAction,
   fetchUpstreamStreamAction,
+  fetchUpstreamProtoAction,
   resetStatsAction,
   statsAction,
   poolAction,

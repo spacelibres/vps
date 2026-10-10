@@ -28,8 +28,8 @@ export function fetchUpstreamStream(requests: readonly UpstreamRequest[]): Respo
         }
       };
 
-      runUpstreamRequests(requests, (i, r) => {
-        write({ i, ...r });
+      runUpstreamRequests(requests, (i, o) => {
+        write({ i, ...o.result });
       })
         .then(() => {
           store.flush();

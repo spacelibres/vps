@@ -23,15 +23,17 @@ type Pool = ReturnType<typeof getHotPool>;
 type Cfg = ReturnType<typeof fetchConfig>;
 
 /**
- * 跑完一批上游请求，**每完成一条立即回调** `onResult(index, result)`。
+ * 跑完一批上游请求，**每完成一条立即回调** `onResult(index, outcome)`。
  *
- * 批式（`fetchUpstream`）与流式（`fetchUpstreamStream`）共用本函数：
- * 流式路径据此边完成边写响应，避免整批 JSON+base64 编码把单核事件循环卡住。
+ * 批式（`fetchUpstream`）、流式 NDJSON（`fetchUpstreamStream`）与二进制帧流
+ * （`fetchUpstreamProto`）共用本函数；`outcome.body` 为上游原始字节，供帧流直接写二进制。
  */
 export async function runUpstreamRequests(
   requests: readonly UpstreamRequest[],
-  onResult: (index: number, result: UpstreamFetchResult) => void,
+  onResult: (index: number, outcome: UpstreamDispatch) => void,
+  opts: RunUpstreamOptions = {},
 ): Promise<void> {
+  const encodeBase64 = opts.encodeBase64 ?? true;
   const cfg = fetchConfig();
   const store = getStore();
   ensurePoolWarm();
@@ -53,11 +55,24 @@ export async function runUpstreamRequests(
       for (;;) {
         const i = next++;
         if (i >= requests.length) return;
-        const result = await dispatchUpstreamOne(cfg, store, pool, hot, requests[i]!, seq++);
-        onResult(i, result);
+        const outcome = await dispatchUpstreamOne(cfg, store, pool, hot, requests[i]!, seq++, encodeBase64);
+        onResult(i, outcome);
       }
     }),
   );
+}
+
+/** 一次派发的结果：给 JSON 路的 `result` + 给二进制帧流的原始 `body`。 */
+export interface UpstreamDispatch {
+  result: UpstreamFetchResult;
+  /** 上游原始响应字节（未 base64）；失败/超限时为 undefined。 */
+  body?: Uint8Array;
+}
+
+/** `runUpstreamRequests` 选项。 */
+export interface RunUpstreamOptions {
+  /** 是否把 body 编码为 base64（放 `result.bodyBase64`）。proto 帧流不需要，省 CPU。默认 true。 */
+  encodeBase64?: boolean;
 }
 
 /** 抓取一条上游：拼 URL → 选热 IP → 出网 → 记账 → 组装结果。 */
@@ -68,7 +83,8 @@ async function dispatchUpstreamOne(
   hot: readonly string[],
   req: UpstreamRequest,
   seq: number,
-): Promise<UpstreamFetchResult> {
+  encodeBase64: boolean,
+): Promise<UpstreamDispatch> {
   const at = Date.now();
 
   let url = "";
@@ -76,13 +92,15 @@ async function dispatchUpstreamOne(
     url = buildUpstreamUrl(req);
   } catch (err) {
     return {
-      ok: false,
-      url: "",
-      ip: "",
-      status: 0,
-      bytes: 0,
-      durationMs: 0,
-      error: err instanceof Error ? err.message : String(err),
+      result: {
+        ok: false,
+        url: "",
+        ip: "",
+        status: 0,
+        bytes: 0,
+        durationMs: 0,
+        error: err instanceof Error ? err.message : String(err),
+      },
     };
   }
 
@@ -93,6 +111,7 @@ async function dispatchUpstreamOne(
   let bytes: number | undefined;
   let durationMs: number | undefined;
   let bodyBase64: string | undefined;
+  let body: Uint8Array | undefined;
   let encoding: string | undefined;
   let error: string | undefined;
 
@@ -106,7 +125,8 @@ async function dispatchUpstreamOne(
     if (r.body.length > MAX_BODY_BYTES) {
       error = `响应体过大（${r.body.length} 字节）`;
     } else {
-      bodyBase64 = Buffer.from(r.body).toString("base64");
+      body = r.body;
+      if (encodeBase64) bodyBase64 = Buffer.from(r.body).toString("base64");
     }
   } catch (err) {
     error = err instanceof Error ? err.message : String(err);
@@ -145,15 +165,18 @@ async function dispatchUpstreamOne(
   });
 
   return {
-    ok: outcome === "success",
-    url,
-    ip,
-    status: status ?? 0,
-    bytes: bytes ?? 0,
-    durationMs: elapsed,
-    bodyBase64,
-    encoding,
-    error,
+    result: {
+      ok: outcome === "success",
+      url,
+      ip,
+      status: status ?? 0,
+      bytes: bytes ?? 0,
+      durationMs: elapsed,
+      bodyBase64,
+      encoding,
+      error,
+    },
+    body,
   };
 }
 
@@ -162,8 +185,8 @@ export async function fetchUpstream(
   requests: readonly UpstreamRequest[],
 ): Promise<UpstreamFetchPayload> {
   const results = new Array<UpstreamFetchResult>(requests.length);
-  await runUpstreamRequests(requests, (i, r) => {
-    results[i] = r;
+  await runUpstreamRequests(requests, (i, o) => {
+    results[i] = o.result;
   });
   getStore().flush();
   return { results };
