@@ -7,6 +7,18 @@
 
 ## [未发布]
 
+## [0.0.46] - 2026-10-09
+
+### 新增
+
+- **ip-pool `fetchUpstreamStream`（NDJSON 流式上游抓取）**：与 `fetchUpstream` 同一逐条逻辑，但
+  **每完成一条立即写一行**（`{i, ok, status, encoding, bodyBase64, error}`，末行 `{done:true,count}`），
+  不再把整批拼成一个巨大 JSON 再 base64 编码。
+  背景：NodeData 单批 256×~8KB 时，单核 Node 事件循环要整批 JSON+base64 编码（~2.7MB）→ 卡顿 →
+  Caddy 拿不到响应 → **502** → 本机 download 任务回队重抓、速度从 ~300/s 衰减到 ~64/s。
+  流式后 TTFB 立即、峰值内存/编码尖峰消失。`upstream.ts` 抽出 `runUpstreamRequests` 供批式/流式共用。
+  `fetchUpstream` 保留（旧客户端兼容）。
+
 ## [0.0.45] - 2026-10-09
 
 ### 修复

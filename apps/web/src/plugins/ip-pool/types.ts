@@ -280,6 +280,14 @@ export interface UpstreamFetchPayload {
   results: UpstreamFetchResult[];
 }
 
+/**
+ * `fetchUpstreamStream`（NDJSON）的每一行。
+ * 正常行为单条结果 + 请求下标 `i`；末行为 `{ done: true, count }`（可带面板级 `error`）。
+ */
+export type UpstreamStreamLine =
+  | (UpstreamFetchResult & { i: number })
+  | { done: true; count: number; error?: string };
+
 /** SSE `metrics` 事件：请求速率 + 网卡流量 + 热池（约每秒一帧）。 */
 export interface StreamMetrics {
   ts: number;

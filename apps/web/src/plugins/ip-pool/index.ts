@@ -10,6 +10,7 @@
  * | dispatch | POST | false | `{ url?, count, concurrency? }` | `DispatchStatus`（本插件 types） |
  * | dispatchStatus | GET | false | `{}` | `DispatchStatus`（本插件 types） |
  * | fetchUpstream | POST | false | `{ requests: [{ kind, base?, path?, epoch?, url? }] }` | `UpstreamFetchPayload`（本插件 types） |
+ * | fetchUpstreamStream | POST | false | `{ requests: [...] }` | `Response`（NDJSON，`raw: true`；逐行 `UpstreamStreamLine`） |
  * | resetStats | POST | false | `{}` | `ResetStatsResult`（本插件 types） |
  * | stream | GET | false | `{}` | `Response`（SSE，`raw: true`） |
  *
@@ -33,6 +34,7 @@ import type {
   UpstreamFetchPayload,
 } from "./types";
 import { fetchUpstream, MAX_UPSTREAM_BATCH } from "./upstream";
+import { fetchUpstreamStream } from "./upstreamStream";
 import { ipPoolViews } from "./view";
 import { ensurePoolWarm, hotIpList } from "./warm";
 
@@ -261,6 +263,21 @@ export const fetchUpstreamAction = defineAction({
 });
 
 /**
+ * 上游抓取（流式，NDJSON）：与 `fetchUpstream` 同一逐条逻辑，但**边完成边写行**，
+ * 不把整批拼成一个巨大 JSON 再编码（避免单核事件循环被 NodeData 大载荷卡顿、Caddy 502）。
+ */
+export const fetchUpstreamStreamAction = defineAction({
+  id: "fetchUpstreamStream",
+  label: "上游抓取（流式）",
+  description: "按结构化参数拼 URL，用热连接出网抓取，按 NDJSON 逐条流式返回原始字节（base64）",
+  method: "POST",
+  needsVps: false,
+  raw: true,
+  input: fetchUpstreamSchema,
+  run: (_ctx, input): Promise<Response> => Promise.resolve(fetchUpstreamStream(input.requests)),
+});
+
+/**
  * 重置统计：清空所有 IP 计数与最近事件并落盘。
  * 远程 SSE 客户端通过 `resetEpoch` 变化收到 `reset` 事件后清空本地脉冲/采样/日志。
  * 热连接属运行时状态，不受影响。
@@ -298,6 +315,7 @@ export const ipPoolActions: readonly PluginAction[] = [
   dispatchAction,
   dispatchStatusAction,
   fetchUpstreamAction,
+  fetchUpstreamStreamAction,
   resetStatsAction,
   statsAction,
   poolAction,
